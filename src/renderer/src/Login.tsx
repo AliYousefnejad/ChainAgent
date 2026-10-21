@@ -19,17 +19,23 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
     }
   }
 
+  // An old message would be misleading once the user changes what they typed.
+  const edit = (set: (value: string) => void, value: string) => {
+    set(value)
+    setError('')
+  }
+
   return (
     <div className="auth-screen">
       <form className="auth-card" onSubmit={submit}>
         <h1 className="auth-title">ChainAgent</h1>
         <label className="field">
           <span>Email</span>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+          <input type="email" value={email} onChange={(e) => edit(setEmail, e.target.value)} required autoFocus />
         </label>
         <label className="field">
           <span>Password</span>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input type="password" value={password} onChange={(e) => edit(setPassword, e.target.value)} required />
         </label>
         {error && <div className="form-error">{error}</div>}
         <button className="btn btn-primary" disabled={busy}>

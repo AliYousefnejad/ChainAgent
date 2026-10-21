@@ -50,8 +50,6 @@ const adminUser = (u: UserRow) => ({
 
 export async function buildApp(db: Db, logger = false): Promise<FastifyInstance> {
   const app = Fastify({ logger })
-  // Unknown emails are checked against this hash so both failures take the same time.
-  const dummyHash = await hashPassword(randomBytes(16).toString('hex'))
 
   const findUser = async (where: string, value: unknown) => {
     const [rows] = await db.query<UserRow[]>(`SELECT * FROM users WHERE ${where} = ?`, [value])
@@ -89,15 +87,18 @@ export async function buildApp(db: Db, logger = false): Promise<FastifyInstance>
         body: {
           type: 'object',
           required: ['email', 'password'],
-          properties: { email: { type: 'string', maxLength: 255 }, password: { type: 'string', maxLength: 200 } }
+          properties: { email: EMAIL, password: { type: 'string', maxLength: 200 } }
         }
       }
     },
     async (req, reply) => {
+      // Accounts are admin-created, so login says plainly whether the email is registered.
       const user = await findUser('email', req.body.email.trim().toLowerCase())
-      const valid = await verifyPassword(req.body.password, user?.password_hash ?? dummyHash)
-      if (!user || !valid) return reply.code(401).send({ message: 'Invalid email or password' })
-      if (!user.is_active) return reply.code(403).send({ message: 'Account disabled' })
+      if (!user) return reply.code(401).send({ message: 'No account found for this email. Ask your admin to add you.' })
+      if (!(await verifyPassword(req.body.password, user.password_hash))) {
+        return reply.code(401).send({ message: 'Wrong password' })
+      }
+      if (!user.is_active) return reply.code(403).send({ message: 'Account disabled. Ask your admin to enable it.' })
 
       const token = randomBytes(32).toString('base64url')
       await db.query(
