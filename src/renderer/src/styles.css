@@ -545,11 +545,7 @@ input.plan-step-title { padding: 4px 8px; font-size: 13px; }
 .sidebar-actions .btn.icon-only { flex: 0 0 auto; padding: 7px 10px; }
 .pill-locked { background: #3a2a12; color: #f0a04b; }
 
-/* F11 focus view: only the agent windows, wires and the prompt box */
-.focus-view .sidebar,
-.focus-view .topbar,
-.focus-view .react-flow__minimap,
-.focus-view .react-flow__controls { display: none; }
+/* Full-screen hint */
 .focus-hint {
   position: fixed;
   top: 16px;

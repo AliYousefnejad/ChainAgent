@@ -10,7 +10,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('plan:create', task, windows, wires, cwd),
   transcribe: (samples: Float32Array, language: string) => ipcRenderer.invoke('stt:transcribe', samples, language),
   onSttProgress: (cb: (percent: number) => void) => listen('stt:progress', cb),
-  onFullScreen: (cb: (on: boolean) => void) => listen('window:fullscreen', cb)
+  onFullScreen: (cb: (on: boolean) => void) => listen('window:fullscreen', cb),
+  toggleFullScreen: () => ipcRenderer.send('window:toggleFullScreen')
 })
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {

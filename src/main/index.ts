@@ -36,8 +36,8 @@ function createWindow(): void {
   win.webContents.on('will-navigate', (e) => e.preventDefault())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
-  // F11 toggles the full-screen focus view. Caught here, before the page and the menu, so it
-  // works while typing in a terminal and the terminal never receives the key.
+  // F11 toggles full screen. Caught here, before the page and the menu, so it works while
+  // typing in a terminal and the terminal never receives the key.
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type !== 'keyDown' || input.key !== 'F11') return
     e.preventDefault()
@@ -80,6 +80,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('pty:spawn', (e, id: string, agentId: string, cwd: string, cols: number, rows: number) =>
     pty.spawn(e.sender, id, agentId, cwd, cols, rows)
   )
+  ipcMain.on('window:toggleFullScreen', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    win?.setFullScreen(!win.isFullScreen())
+  })
   ipcMain.on('pty:write', (_e, id: string, data: string) => pty.write(id, data))
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => pty.resize(id, cols, rows))
   ipcMain.on('pty:kill', (_e, id: string) => pty.kill(id))

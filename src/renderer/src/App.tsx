@@ -57,7 +57,13 @@ function chainStart(nodes: AgentNodeType[], edges: WireEdgeType[]): string | und
   return (starts.sort((a, b) => a.position.x - b.position.x)[0] ?? nodes[0])?.id
 }
 
-function Canvas() {
+const FullScreenIcon = ({ on }: { on: boolean }) => (
+  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d={on ? 'M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3' : 'M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'} />
+  </svg>
+)
+
+function Canvas({ fullScreen }: { fullScreen: boolean }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<AgentNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<WireEdgeType>([])
   const { screenToFlowPosition } = useReactFlow()
@@ -277,6 +283,14 @@ function Canvas() {
           {nodes.length} session{nodes.length === 1 ? '' : 's'} · {edges.length} connection
           {edges.length === 1 ? '' : 's'}
         </span>
+        <button
+          className="icon-btn"
+          title={fullScreen ? 'Exit full screen (F11)' : 'Full screen (F11)'}
+          aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
+          onClick={() => window.api.toggleFullScreen()}
+        >
+          <FullScreenIcon on={fullScreen} />
+        </button>
       </div>
       <ReactFlow
         nodes={shownNodes}
@@ -322,9 +336,9 @@ export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [adminOpen, setAdminOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
-  // F11 (handled in main) puts the window in full screen; the layout then shows only the canvas.
-  const [focusView, setFocusView] = useState(false)
-  useEffect(() => window.api.onFullScreen(setFocusView), [])
+  // Mirrors the window's real full-screen state (F11, the top-bar button or the window manager).
+  const [fullScreen, setFullScreen] = useState(false)
+  useEffect(() => window.api.onFullScreen(setFullScreen), [])
 
   useEffect(() => {
     onUnauthorized(() => setUser(null))
@@ -343,8 +357,8 @@ export default function App() {
 
   return (
     <ReactFlowProvider>
-      <div className={focusView ? 'app focus-view' : 'app'}>
-        {focusView && <div className="focus-hint">Full screen. Press F11 to exit.</div>}
+      <div className="app">
+        {fullScreen && <div className="focus-hint">Full screen. Press F11 to exit.</div>}
         <Sidebar
           user={user}
           onToggleAdmin={() => setAdminOpen((o) => !o)}
@@ -352,7 +366,7 @@ export default function App() {
           onLogout={logout}
         />
         <div className="workspace">
-          <Canvas />
+          <Canvas fullScreen={fullScreen} />
           {adminOpen && <Admin currentUser={user} onClose={() => setAdminOpen(false)} />}
           {passwordOpen && <ChangePassword onClose={() => setPasswordOpen(false)} />}
         </div>

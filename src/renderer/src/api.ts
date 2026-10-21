@@ -16,6 +16,7 @@ declare global {
       transcribe(samples: Float32Array, language: string): Promise<{ text?: string; error?: string }>
       onSttProgress(cb: (percent: number) => void): () => void
       onFullScreen(cb: (on: boolean) => void): () => void
+      toggleFullScreen(): void
     }
     pty: {
       spawn(id: string, agentId: string, cwd: string, cols: number, rows: number): Promise<string | null>
