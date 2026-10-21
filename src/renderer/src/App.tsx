@@ -25,6 +25,7 @@ import { api, onUnauthorized, type AgentType, type Team, type User } from './api
 import Login from './Login'
 import CompleteSetup from './CompleteSetup'
 import Admin from './Admin'
+import Insights from './Insights'
 import ChangePassword from './ChangePassword'
 
 const nodeTypes = { agent: AgentNode }
@@ -478,6 +479,7 @@ export default function App() {
   // undefined = still checking the stored session
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [adminOpen, setAdminOpen] = useState(false)
+  const [insightsOpen, setInsightsOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
   // Mirrors the window's real full-screen state (F11, the top-bar button or the window manager).
   const [fullScreen, setFullScreen] = useState(false)
@@ -491,6 +493,7 @@ export default function App() {
   const logout = async () => {
     await api.logout()
     setAdminOpen(false)
+    setInsightsOpen(false)
     setUser(null)
   }
 
@@ -504,13 +507,21 @@ export default function App() {
         {fullScreen && <div className="focus-hint">Full screen. Press F11 to exit.</div>}
         <Sidebar
           user={user}
-          onToggleAdmin={() => setAdminOpen((o) => !o)}
+          onToggleAdmin={() => {
+            setAdminOpen((o) => !o)
+            setInsightsOpen(false)
+          }}
+          onToggleInsights={() => {
+            setInsightsOpen((o) => !o)
+            setAdminOpen(false)
+          }}
           onChangePassword={() => setPasswordOpen(true)}
           onLogout={logout}
         />
         <div className="workspace">
           <Canvas fullScreen={fullScreen} />
-          {adminOpen && <Admin currentUser={user} onClose={() => setAdminOpen(false)} />}
+          {adminOpen && user.role !== 'user' && <Admin currentUser={user} onClose={() => setAdminOpen(false)} />}
+          {insightsOpen && <Insights currentUser={user} onClose={() => setInsightsOpen(false)} />}
           {passwordOpen && <ChangePassword onClose={() => setPasswordOpen(false)} />}
         </div>
       </div>

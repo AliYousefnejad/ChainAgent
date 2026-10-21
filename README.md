@@ -43,6 +43,15 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - On first login each person must choose a username and set a new password.
   - Admins can list, disable/enable and reset users. Disabling someone or resetting their password signs them out everywhere immediately.
   - Anyone can change their own password with the key icon in the sidebar. Their other sessions are signed out.
+- **Insights for managers** (GitLab).
+  - Link your projects (any self-hosted GitLab or gitlab.com) with a read-only token. Commits, merge requests, approvals and MR comments are synced every 30 minutes, or on **Sync now**.
+  - **People:** per person and date range: commits and lines added/removed (default branch, merge commits excluded), MRs opened and merged, approvals given, MR comments.
+  - **Unmatched authors** lists commit emails that belong to nobody yet. Link one to a person with one click.
+  - **Projects:** totals per project. **Merge requests:** list with links to GitLab.
+- **Roles.**
+  - **Admin:** everything, including setting roles.
+  - **Manager (Head):** Insights for everyone, projects, and managing members (add, disable, reset).
+  - **Member:** sees only their own numbers, with a note on what managers can see.
 - **Sign-in protection.**
   - Login says plainly whether an email has an account.
   - **5 wrong passwords in a row lock that account for 15 minutes**, including attempts sent at the same time. An admin's *Reset password* unlocks it immediately, and the Users page shows a *Locked* badge.
@@ -101,6 +110,8 @@ npm install
 cp .env.example .env        # set DB_USER / DB_PASSWORD / DB_NAME
 npm run migrate
 npm run create-admin -- you@company.com 'a-strong-password'
+# for Insights: a key that encrypts GitLab tokens at rest (put it in .env as CHAINAGENT_SECRET_KEY)
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 npm start                   # http://127.0.0.1:3100
 ```
 
@@ -125,8 +136,9 @@ The app talks to `http://localhost:3100` by default. Set `CHAINAGENT_API_URL` to
 2. Drag an agent from the sidebar onto the canvas and pick the folder it should work in.
 3. Drag from the right dot of one window to the left dot of another to wire them. The arrow shows the direction.
 4. Give the first agent a task. When it finishes, its answer goes down the wire. For wires into a Shell, click **Auto-run** if the commands should run without you pressing Enter.
-5. Or switch the prompt box to **Team**, describe the job, review the team Claude proposes, and press **Create & run**.
-6. Admins: **Users** in the sidebar opens user management.
+5. Managers: **Insights** → **Projects** → add your GitLab project (URL, `group/project`, and a token with the `read_api` scope, which can be a project or group access token). Then link people's GitLab usernames and commit emails on **Users**, or with **Link to…** under Unmatched authors.
+6. Or switch the prompt box to **Team**, describe the job, review the team Claude proposes, and press **Create & run**.
+7. Admins and managers: **Users** in the sidebar opens user management.
 
 ## Scripts
 
