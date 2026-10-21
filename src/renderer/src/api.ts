@@ -4,7 +4,7 @@ export type PlanWindow = { id: string; agent: string; name: string; cwd: string 
 export type PlanStep = { id: string; agent: string; title: string; prompt: string; dependsOn: string[] }
 export type PlanResult = { steps: PlanStep[] } | { error: string }
 
-export type AgentType = 'claude' | 'codex' | 'gemini' | 'shell'
+export type AgentType = 'claude' | 'codex' | 'gemini' | 'opencode' | 'shell'
 export type TeamAgent = { key: string; type: AgentType; role: string; instructions: string; useSubagents: boolean }
 export type TeamWire = { from: string; to: string; autoRun: boolean }
 export type Team = { agents: TeamAgent[]; wires: TeamWire[]; firstAgent: string; firstPrompt: string }
@@ -25,6 +25,7 @@ declare global {
       createTeam(task: string, allowed: AgentType[], cwd: string): Promise<TeamResult>
       isClaudeTrusted(folder: string): Promise<boolean>
       toggleFullScreen(): void
+      track(type: 'handoff' | 'prompt' | 'plan_run' | 'team_run' | 'active', nodeId?: string, detail?: string): void
     }
     pty: {
       spawn(id: string, agentId: string, cwd: string, cols: number, rows: number, role?: string): Promise<string | null>
@@ -41,7 +42,8 @@ declare global {
   }
 }
 
-export type Role = 'admin' | 'user'
+// 'user' is a member: the server keeps that value, the UI calls it "Member".
+export type Role = 'admin' | 'manager' | 'user'
 export type User = { id: number; email: string; username: string | null; role: Role; mustChangePassword: boolean }
 export type AdminUser = {
   id: number
@@ -52,6 +54,89 @@ export type AdminUser = {
   pendingSetup: boolean
   lockedUntil: string | null
   createdAt: string
+  gitlabUsername: string | null
+  gitEmails: string[]
+}
+
+export type Project = {
+  id: number
+  name: string
+  gitlabUrl: string
+  gitlabProject: string
+  hasToken: boolean
+  lastSyncedAt: string | null
+  syncError: string | null
+}
+export type SyncResult = { commits: number; mergeRequests: number; events: number }
+type ActivityCounts = {
+  commits: number
+  additions: number
+  deletions: number
+  mrsOpened: number
+  mrsMerged: number
+  approvals: number
+  comments: number
+}
+// Usage in ChainAgent, from the app's activity events.
+type UsageCounts = {
+  activeMinutes: number
+  windows: number
+  prompts: number
+  turns: number
+  handoffs: number
+  plans: number
+  teams: number
+}
+export type PersonStats = ActivityCounts & UsageCounts & { userId: number; name: string; email: string }
+export type UnmatchedAuthor = { authorName: string; authorEmail: string; commits: number }
+export type ProjectStats = ActivityCounts & {
+  projectId: number
+  name: string
+  contributors: number
+  lastSyncedAt: string | null
+  syncError: string | null
+}
+export type MergeRequestRow = {
+  projectId: number
+  projectName: string
+  iid: number
+  title: string
+  authorName: string
+  state: 'opened' | 'merged' | 'closed' | 'locked'
+  createdAt: string
+  mergedAt: string | null
+  mergedBy: string | null
+  reviewers: string[]
+  webUrl: string
+}
+export type ActivityType =
+  | 'login'
+  | 'logout'
+  | 'window_opened'
+  | 'window_closed'
+  | 'turn_finished'
+  | 'handoff'
+  | 'prompt'
+  | 'plan_run'
+  | 'team_run'
+  | 'active'
+export type ActivityRow = {
+  at: string
+  userId: number
+  name: string
+  type: ActivityType
+  agent: AgentType | null
+  detail: string | null
+  projectName: string | null
+}
+// from/to are YYYY-MM-DD, both inclusive.
+export type InsightsFilter = {
+  from: string
+  to: string
+  project?: number
+  author?: number
+  user?: number
+  type?: ActivityType
 }
 
 let unauthorized: () => void = () => {}
@@ -62,6 +147,15 @@ export const onUnauthorized = (cb: () => void) => {
 function unwrap<T>(res: ApiResult): T {
   if (!res.ok) throw new Error(res.data?.message ?? `Request failed (${res.status})`)
   return res.data as T
+}
+
+function withQuery(path: string, filter: InsightsFilter) {
+  const params = new URLSearchParams({ from: filter.from, to: filter.to })
+  if (filter.project) params.set('project', String(filter.project))
+  if (filter.author) params.set('author', String(filter.author))
+  if (filter.user) params.set('user', String(filter.user))
+  if (filter.type) params.set('type', filter.type)
+  return `${path}?${params}`
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -82,5 +176,22 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string) =>
     call<void>('POST', '/me/password', { currentPassword, newPassword }),
   resetPassword: (id: number, tempPassword: string) =>
-    call<void>('POST', `/admin/users/${id}/reset-password`, { tempPassword })
+    call<void>('POST', `/admin/users/${id}/reset-password`, { tempPassword }),
+  setRole: (id: number, role: Role) => call<AdminUser>('PATCH', `/admin/users/${id}/role`, { role }),
+  setIdentity: (id: number, gitlabUsername: string | null, gitEmails: string[]) =>
+    call<AdminUser>('PATCH', `/admin/users/${id}/identity`, { gitlabUsername, gitEmails }),
+  listProjects: () => call<Project[]>('GET', '/projects'),
+  createProject: (project: { name: string; gitlabUrl: string; gitlabProject: string; token?: string }) =>
+    call<Project>('POST', '/projects', project),
+  updateProject: (id: number, changes: { name?: string; token?: string }) =>
+    call<Project>('PATCH', `/projects/${id}`, changes),
+  deleteProject: (id: number) => call<void>('DELETE', `/projects/${id}`),
+  syncProject: (id: number) => call<SyncResult>('POST', `/projects/${id}/sync`),
+  insightsPeople: (filter: InsightsFilter) => call<PersonStats[]>('GET', withQuery('/insights/people', filter)),
+  insightsUnmatched: (filter: InsightsFilter) =>
+    call<UnmatchedAuthor[]>('GET', withQuery('/insights/unmatched', filter)),
+  insightsProjects: (filter: InsightsFilter) => call<ProjectStats[]>('GET', withQuery('/insights/projects', filter)),
+  insightsMergeRequests: (filter: InsightsFilter) =>
+    call<MergeRequestRow[]>('GET', withQuery('/insights/merge-requests', filter)),
+  insightsActivity: (filter: InsightsFilter) => call<ActivityRow[]>('GET', withQuery('/insights/activity', filter))
 }

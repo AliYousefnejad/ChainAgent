@@ -2,7 +2,10 @@ import { createHash, randomBytes } from 'node:crypto'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import type { ResultSetHeader, RowDataPacket } from 'mysql2'
 import type { Db } from './db'
+import { activityRoutes, record } from './activity'
+import { insightRoutes } from './insights'
 import { createLoginLimiter, type LoginLimiter } from './login-limiter'
+import { projectRoutes } from './projects'
 import { hashPassword, verifyPassword } from './password'
 
 type UserRow = RowDataPacket & {
@@ -10,9 +13,11 @@ type UserRow = RowDataPacket & {
   email: string
   username: string | null
   password_hash: string
-  role: 'admin' | 'user'
+  role: Role
   must_change_password: number
   is_active: number
+  gitlab_username: string | null
+  git_emails: string[] | null
   created_at: Date
   failed_logins: number
   locked_until: Date | null
@@ -25,6 +30,9 @@ declare module 'fastify' {
     tokenHash: string
   }
 }
+
+export type Role = 'admin' | 'manager' | 'user'
+const ROLES: Role[] = ['admin', 'manager', 'user']
 
 const SESSION_DAYS = 30
 const MAX_WRONG_PASSWORDS = 5
@@ -52,6 +60,8 @@ const adminUser = (u: UserRow) => ({
   active: Boolean(u.is_active),
   pendingSetup: Boolean(u.must_change_password),
   lockedUntil: u.lock_seconds ? u.locked_until : null,
+  gitlabUsername: u.gitlab_username,
+  gitEmails: u.git_emails ?? [],
   createdAt: u.created_at
 })
 
@@ -89,9 +99,14 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
     }
   }
 
-  async function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
-    if (req.user.role !== 'admin') return reply.code(403).send({ message: 'Admin only' })
-  }
+  const requireRole =
+    (...roles: Role[]) =>
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      if (!roles.includes(req.user.role)) return reply.code(403).send({ message: 'Not allowed for your role' })
+    }
+
+  // Admins manage everyone; managers manage members only.
+  const canManage = (actor: UserRow, target: UserRow) => actor.role === 'admin' || target.role === 'user'
 
   app.post<{ Body: { email: string; password: string } }>(
     '/auth/login',
@@ -143,6 +158,7 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
       await db.query('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', [user.id])
       if (!user.is_active) return reply.code(403).send({ message: 'Account disabled. Ask your admin to enable it.' })
 
+      await record(db, user.id, 'login')
       const token = randomBytes(32).toString('base64url')
       await db.query(
         'INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (?, ?, NOW() + INTERVAL ? DAY)',
@@ -156,6 +172,7 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
     authed.addHook('preHandler', requireAuth)
 
     authed.post('/auth/logout', async (req, reply) => {
+      await record(db, req.user.id, 'logout')
       await db.query('DELETE FROM sessions WHERE token_hash = ?', [req.tokenHash])
       return reply.code(204).send()
     })
@@ -223,7 +240,7 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
     authed.register(
       async (admin) => {
         admin.addHook('preHandler', requireSetupDone)
-        admin.addHook('preHandler', requireAdmin)
+        admin.addHook('preHandler', requireRole('admin', 'manager'))
 
         admin.get('/users', async () => {
           const [rows] = await db.query<UserRow[]>(`SELECT ${USER_COLUMNS} FROM users ORDER BY created_at DESC, id DESC`)
@@ -264,11 +281,10 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
             if (id === req.user.id && !req.body.active) {
               return reply.code(400).send({ message: "You can't disable your own account" })
             }
-            const [result] = await db.query<ResultSetHeader>('UPDATE users SET is_active = ? WHERE id = ?', [
-              req.body.active ? 1 : 0,
-              id
-            ])
-            if (!result.affectedRows) return reply.code(404).send({ message: 'User not found' })
+            const target = await findUser('id', id)
+            if (!target) return reply.code(404).send({ message: 'User not found' })
+            if (!canManage(req.user, target)) return reply.code(403).send({ message: 'Managers can only manage members' })
+            await db.query('UPDATE users SET is_active = ? WHERE id = ?', [req.body.active ? 1 : 0, id])
             if (!req.body.active) await db.query('DELETE FROM sessions WHERE user_id = ?', [id])
             return adminUser((await findUser('id', id))!)
           }
@@ -284,18 +300,70 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
           },
           async (req, reply) => {
             const { id } = req.params
-            const [result] = await db.query<ResultSetHeader>(
+            const target = await findUser('id', id)
+            if (!target) return reply.code(404).send({ message: 'User not found' })
+            if (!canManage(req.user, target)) return reply.code(403).send({ message: 'Managers can only manage members' })
+            await db.query(
               'UPDATE users SET password_hash = ?, must_change_password = 1, failed_logins = 0, locked_until = NULL WHERE id = ?',
               [await hashPassword(req.body.tempPassword), id]
             )
-            if (!result.affectedRows) return reply.code(404).send({ message: 'User not found' })
             await db.query('DELETE FROM sessions WHERE user_id = ?', [id])
             return reply.code(204).send()
+          }
+        )
+
+        admin.patch<{ Params: { id: number }; Body: { role: Role } }>(
+          '/users/:id/role',
+          {
+            preHandler: requireRole('admin'),
+            schema: {
+              params: ID_PARAMS,
+              body: { type: 'object', required: ['role'], properties: { role: { type: 'string', enum: ROLES } } }
+            }
+          },
+          async (req, reply) => {
+            const { id } = req.params
+            if (id === req.user.id) return reply.code(400).send({ message: "You can't change your own role" })
+            const [result] = await db.query<ResultSetHeader>('UPDATE users SET role = ? WHERE id = ?', [req.body.role, id])
+            if (!result.affectedRows) return reply.code(404).send({ message: 'User not found' })
+            return adminUser((await findUser('id', id))!)
+          }
+        )
+
+        // Links a person to their GitLab account and the emails their commits use.
+        admin.patch<{ Params: { id: number }; Body: { gitlabUsername: string | null; gitEmails: string[] } }>(
+          '/users/:id/identity',
+          {
+            schema: {
+              params: ID_PARAMS,
+              body: {
+                type: 'object',
+                required: ['gitlabUsername', 'gitEmails'],
+                properties: {
+                  gitlabUsername: { type: ['string', 'null'], maxLength: 255 },
+                  gitEmails: { type: 'array', maxItems: 20, items: EMAIL }
+                }
+              }
+            }
+          },
+          async (req, reply) => {
+            const { id } = req.params
+            const target = await findUser('id', id)
+            if (!target) return reply.code(404).send({ message: 'User not found' })
+            if (!canManage(req.user, target)) return reply.code(403).send({ message: 'Managers can only manage members' })
+            const username = req.body.gitlabUsername?.trim().replace(/^@/, '') || null
+            const emails = [...new Set(req.body.gitEmails.map((e) => e.trim().toLowerCase()))]
+            await db.query('UPDATE users SET gitlab_username = ?, git_emails = ? WHERE id = ?', [username, JSON.stringify(emails), id])
+            return adminUser((await findUser('id', id))!)
           }
         )
       },
       { prefix: '/admin' }
     )
+
+    authed.register(projectRoutes(db, [requireSetupDone, requireRole('admin', 'manager')]), { prefix: '/projects' })
+    authed.register(insightRoutes(db, [requireSetupDone]), { prefix: '/insights' })
+    authed.register(activityRoutes(db, [requireSetupDone]), { prefix: '/activity' })
   })
 
   return app

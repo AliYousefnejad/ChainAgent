@@ -25,6 +25,7 @@ import { api, onUnauthorized, type AgentType, type Team, type User } from './api
 import Login from './Login'
 import CompleteSetup from './CompleteSetup'
 import Admin from './Admin'
+import Insights from './Insights'
 import ChangePassword from './ChangePassword'
 
 const nodeTypes = { agent: AgentNode }
@@ -80,6 +81,9 @@ function makeWire(source: AgentNodeType, target: AgentNodeType, autoRun = false)
 const TEAM_GAP = 80
 const TEAM_PER_ROW = 3
 const READY_POLL_MS = 700
+// An active minute counts while the app has focus and was used in the last 5 minutes.
+const ACTIVE_TICK_MS = 60_000
+const IDLE_AFTER_MS = 5 * 60_000
 
 function Canvas({ fullScreen }: { fullScreen: boolean }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<AgentNodeType>([])
@@ -112,6 +116,20 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
     redraw()
   }, [])
   useEffect(() => window.pty.onReady((id) => readyClaude.current.add(id)), [])
+
+  useEffect(() => {
+    let lastInput = Date.now()
+    const used = () => (lastInput = Date.now())
+    const events = ['keydown', 'pointerdown', 'wheel'] as const
+    for (const e of events) window.addEventListener(e, used, { capture: true, passive: true })
+    const timer = window.setInterval(() => {
+      if (document.hasFocus() && Date.now() - lastInput < IDLE_AFTER_MS) window.api.track('active')
+    }, ACTIVE_TICK_MS)
+    return () => {
+      clearInterval(timer)
+      for (const e of events) window.removeEventListener(e, used, { capture: true })
+    }
+  }, [])
 
   // Codex and Gemini team members have no system-prompt flag, so their role leads every message.
   const toAgent = useCallback((nodeId: string, text: string) => {
@@ -200,6 +218,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
             : window.pty.deliver(edge.target, toAgent(edge.target, `From ${from}:\n${text}`), true)
           delivery.then((result) => {
             if (result !== 'sent') return labelEdge(edge.id, result, false)
+            window.api.track('handoff', edge.target, source.data.agentId)
             hops.current[edge.target] = hop + 1
             labelEdge(edge.id, 'sent', true)
           })
@@ -235,13 +254,16 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
     hops.current[target] = 0
     const isShell = nodes.find((n) => n.id === target)?.data.agentId === 'shell'
     const result = await window.pty.deliver(target, isShell ? text : toAgent(target, text), true)
-    return result === 'sent' ? null : `Not sent: ${result}.`
+    if (result !== 'sent') return `Not sent: ${result}.`
+    window.api.track('prompt', target, 'send')
+    return null
   }
 
   const makePlan = async (task: string, target: string) => {
     if (planRef.current?.phase === 'running') return 'A plan is already running.'
     if (teamRef.current) return 'Close the team panel first.'
     setPlanning(true)
+    window.api.track('prompt', target, 'plan')
     const result = await window.api.createPlan(
       task,
       nodes.map((n) => ({ id: n.id, agent: n.data.agentId, name: labelOf(n), cwd: n.data.cwd })),
@@ -262,6 +284,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
     const cwd = await window.api.pickFolder()
     if (!cwd) return 'Pick the project folder for the team.'
     setDesigning(true)
+    window.api.track('prompt', undefined, 'team')
     const [result, trusted] = await Promise.all([window.api.createTeam(task, allowed, cwd), window.api.isClaudeTrusted(cwd)])
     setDesigning(false)
     if ('error' in result) return result.error
@@ -341,6 +364,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
     setTimeout(() => fitView({ nodes: newNodes.map((n) => ({ id: n.id })), padding: 0.15, duration: 400 }), 60)
 
     setTeam({ ...state, team, phase: 'starting', ready: 0, note: undefined })
+    window.api.track('team_run')
     const first = team.agents.find((a) => a.key === team.firstAgent)!
     startWhenReady(newNodes.map((n) => n.id), created.get(first.key)!.id, first.role)
   }
@@ -405,6 +429,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
       onChange={(steps) => setPlan({ ...plan, steps })}
       onRun={() => {
         planRef.current = { ...plan, phase: 'running', note: undefined, steps: plan.steps.map((s) => ({ ...s, status: 'waiting' })) }
+        window.api.track('plan_run')
         schedule()
       }}
       onCancel={() => {
@@ -478,6 +503,7 @@ export default function App() {
   // undefined = still checking the stored session
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [adminOpen, setAdminOpen] = useState(false)
+  const [insightsOpen, setInsightsOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
   // Mirrors the window's real full-screen state (F11, the top-bar button or the window manager).
   const [fullScreen, setFullScreen] = useState(false)
@@ -491,6 +517,7 @@ export default function App() {
   const logout = async () => {
     await api.logout()
     setAdminOpen(false)
+    setInsightsOpen(false)
     setUser(null)
   }
 
@@ -504,13 +531,21 @@ export default function App() {
         {fullScreen && <div className="focus-hint">Full screen. Press F11 to exit.</div>}
         <Sidebar
           user={user}
-          onToggleAdmin={() => setAdminOpen((o) => !o)}
+          onToggleAdmin={() => {
+            setAdminOpen((o) => !o)
+            setInsightsOpen(false)
+          }}
+          onToggleInsights={() => {
+            setInsightsOpen((o) => !o)
+            setAdminOpen(false)
+          }}
           onChangePassword={() => setPasswordOpen(true)}
           onLogout={logout}
         />
         <div className="workspace">
           <Canvas fullScreen={fullScreen} />
-          {adminOpen && <Admin currentUser={user} onClose={() => setAdminOpen(false)} />}
+          {adminOpen && user.role !== 'user' && <Admin currentUser={user} onClose={() => setAdminOpen(false)} />}
+          {insightsOpen && <Insights currentUser={user} onClose={() => setInsightsOpen(false)} />}
           {passwordOpen && <ChangePassword onClose={() => setPasswordOpen(false)} />}
         </div>
       </div>

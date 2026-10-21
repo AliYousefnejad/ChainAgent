@@ -1,17 +1,19 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow } from 'electron'
 import notifyHelper from './notify-helper.cjs?raw'
+import opencodePlugin from './opencode-plugin.js?raw'
+import * as activity from './activity'
 import { writeZshIntegration } from './shell-integration'
 
 // Agents report a finished turn by POSTing here: Claude through its Stop hook, Codex and
 // Gemini through notify-helper.cjs. The secret and node id come from env vars on each pty.
 export const HOOK_SECRET = randomBytes(24).toString('hex')
-export const paths = { claudeSettings: '', geminiSettings: '', notifyHelper: '', zshDir: '' }
+export const paths = { claudeSettings: '', geminiSettings: '', notifyHelper: '', opencodePlugin: '', rolesDir: '', zshDir: '' }
 export let hookUrl = ''
 
 const MAX_BODY = 5_000_000
@@ -27,6 +29,7 @@ function emitToWindows(channel: string, ...args: unknown[]): void {
 }
 
 export function emitFinished(node: string, text: string): void {
+  activity.turnFinished(node)
   emitToWindows('agent:finished', node, text)
 }
 
@@ -64,6 +67,8 @@ export async function startHookServer(): Promise<void> {
   paths.geminiSettings = join(dir, 'gemini-settings.json')
   paths.notifyHelper = join(dir, 'notify-helper.cjs')
   paths.zshDir = join(dir, 'zsh')
+  paths.opencodePlugin = join(dir, 'opencode-chainagent.js')
+  paths.rolesDir = join(dir, 'roles')
 
   const claudeHook = {
     type: 'http',
@@ -73,6 +78,8 @@ export async function startHookServer(): Promise<void> {
     timeout: 5
   }
   writeFileSync(paths.notifyHelper, notifyHelper)
+  writeFileSync(paths.opencodePlugin, opencodePlugin)
+  mkdirSync(paths.rolesDir, { recursive: true })
   // SessionStart only runs once the folder is trusted, so it doubles as "this window is ready".
   const readyHook = { type: 'command', command: helperCommand('claude-ready'), timeout: 10 }
   writeFileSync(

@@ -7,6 +7,8 @@ import { hashPassword } from '../src/password'
 export type Ctx = { db: Db; app: FastifyInstance }
 
 export async function setup(): Promise<Ctx> {
+  // Project tokens are encrypted with this key; tests use a throwaway one.
+  process.env.CHAINAGENT_SECRET_KEY ??= Buffer.alloc(32, 7).toString('base64')
   // Tests wipe tables, so they only run against a database named *_test.
   process.env.DB_NAME = process.env.TEST_DB_NAME
   if (!process.env.DB_NAME?.endsWith('_test')) throw new Error('Set TEST_DB_NAME to a database ending in _test')
@@ -22,11 +24,12 @@ export async function teardown({ db, app }: Ctx): Promise<void> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.query('DELETE FROM sessions')
-  await db.query('DELETE FROM users')
+  for (const table of ['activity', 'mr_events', 'merge_requests', 'commits', 'projects', 'sessions', 'users']) {
+    await db.query(`DELETE FROM ${table}`)
+  }
 }
 
-type NewUser = { email: string; password: string; role?: 'admin' | 'user'; mustChange?: boolean; active?: boolean; username?: string }
+type NewUser = { email: string; password: string; role?: 'admin' | 'manager' | 'user'; mustChange?: boolean; active?: boolean; username?: string }
 
 export async function createUser(db: Db, u: NewUser): Promise<number> {
   const [result] = await db.query<import('mysql2').ResultSetHeader>(

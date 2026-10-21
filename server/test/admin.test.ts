@@ -63,7 +63,7 @@ describe('admin routes', () => {
     const users = res.json()
     assert.equal(users.length, 2)
     for (const u of users) {
-      assert.deepEqual(Object.keys(u).sort(), ['active', 'createdAt', 'email', 'id', 'lockedUntil', 'pendingSetup', 'role', 'username'])
+      assert.deepEqual(Object.keys(u).sort(), ['active', 'createdAt', 'email', 'gitEmails', 'gitlabUsername', 'id', 'lockedUntil', 'pendingSetup', 'role', 'username'])
     }
     assert.equal(users.find((u: { email: string }) => u.email === 'u@corp.com').pendingSetup, true)
   })
