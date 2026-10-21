@@ -24,6 +24,7 @@ import { api, onUnauthorized, type User } from './api'
 import Login from './Login'
 import CompleteSetup from './CompleteSetup'
 import Admin from './Admin'
+import ChangePassword from './ChangePassword'
 
 const nodeTypes = { agent: AgentNode }
 const edgeTypes = { wire: WireEdge }
@@ -320,6 +321,7 @@ export default function App() {
   // undefined = still checking the stored session
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [adminOpen, setAdminOpen] = useState(false)
+  const [passwordOpen, setPasswordOpen] = useState(false)
 
   useEffect(() => {
     onUnauthorized(() => setUser(null))
@@ -339,10 +341,16 @@ export default function App() {
   return (
     <ReactFlowProvider>
       <div className="app">
-        <Sidebar user={user} onToggleAdmin={() => setAdminOpen((o) => !o)} onLogout={logout} />
+        <Sidebar
+          user={user}
+          onToggleAdmin={() => setAdminOpen((o) => !o)}
+          onChangePassword={() => setPasswordOpen(true)}
+          onLogout={logout}
+        />
         <div className="workspace">
           <Canvas />
           {adminOpen && <Admin currentUser={user} onClose={() => setAdminOpen(false)} />}
+          {passwordOpen && <ChangePassword onClose={() => setPasswordOpen(false)} />}
         </div>
       </div>
     </ReactFlowProvider>

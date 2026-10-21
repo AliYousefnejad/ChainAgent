@@ -530,3 +530,17 @@ input.plan-step-title { padding: 4px 8px; font-size: 13px; }
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent), 0 0 28px color-mix(in srgb, var(--accent) 45%, transparent);
 }
+
+/* Change-password dialog */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 7, 10, 0.6);
+  backdrop-filter: blur(3px);
+}
+.form-success { color: #4fd1a5; font-size: 14px; text-align: center; padding: 12px 0; }
+.sidebar-actions .btn.icon-only { flex: 0 0 auto; padding: 7px 10px; }
+.pill-locked { background: #3a2a12; color: #f0a04b; }

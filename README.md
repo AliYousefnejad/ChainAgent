@@ -36,6 +36,12 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - An admin adds people with an email and a temporary password.
   - On first login each person must choose a username and set a new password.
   - Admins can list, disable/enable and reset users. Disabling someone or resetting their password signs them out everywhere immediately.
+  - Anyone can change their own password with the key icon in the sidebar. Their other sessions are signed out.
+- **Sign-in protection.**
+  - Login says plainly whether an email has an account.
+  - **5 wrong passwords in a row lock that account for 15 minutes**, including attempts sent at the same time. An admin's *Reset password* unlocks it immediately, and the Users page shows a *Locked* badge.
+  - **20 failed sign-ins from one network address in 15 minutes** block that address for the rest of the window, which also stops guessing emails. This counter is kept in memory, so it resets when the API restarts.
+  - Behind a reverse proxy (nginx), set `TRUST_PROXY` to the proxy's address, e.g. `TRUST_PROXY=127.0.0.1` for nginx on the same server, so each client's real address is used. Don't trust every hop: clients could then fake their address.
 
 ## How it works
 
@@ -137,7 +143,7 @@ Early but working. Known limits and next steps:
 - [ ] Live dictation while you speak, and automatic language detection
 - [ ] Save and restore workspaces (windows, folders, wires)
 - [ ] Installers (electron-builder), with node-pty unpacked from asar
-- [ ] Login rate limiting; run the API behind HTTPS in production
+- [ ] Run the API behind HTTPS in production (deployment guide)
 - [ ] Logging out or quitting ends all running sessions (by design for now)
 
 ## Tech stack

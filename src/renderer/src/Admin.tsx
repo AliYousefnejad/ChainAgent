@@ -99,7 +99,12 @@ export default function Admin({ currentUser, onClose }: Props) {
               <td>
                 <span className={u.active ? 'pill pill-active' : 'pill pill-disabled'}>
                   {u.active ? 'Active' : 'Disabled'}
-                </span>
+                </span>{' '}
+                {u.lockedUntil && (
+                  <span className="pill pill-locked" title="Too many wrong passwords. Reset password unlocks it now.">
+                    Locked until {new Date(u.lockedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
               </td>
               <td>
                 <div className="admin-actions">

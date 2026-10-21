@@ -38,6 +38,7 @@ export type AdminUser = {
   role: Role
   active: boolean
   pendingSetup: boolean
+  lockedUntil: string | null
   createdAt: string
 }
 
@@ -66,6 +67,8 @@ export const api = {
   listUsers: () => call<AdminUser[]>('GET', '/admin/users'),
   createUser: (email: string, tempPassword: string) => call<AdminUser>('POST', '/admin/users', { email, tempPassword }),
   setActive: (id: number, active: boolean) => call<AdminUser>('PATCH', `/admin/users/${id}/status`, { active }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    call<void>('POST', '/me/password', { currentPassword, newPassword }),
   resetPassword: (id: number, tempPassword: string) =>
     call<void>('POST', `/admin/users/${id}/reset-password`, { tempPassword })
 }
