@@ -22,8 +22,12 @@ function authorized(header: string | undefined): boolean {
   return given.length === expectedAuth.length && timingSafeEqual(given, expectedAuth)
 }
 
+function emitToWindows(channel: string, ...args: unknown[]): void {
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, ...args)
+}
+
 export function emitFinished(node: string, text: string): void {
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('agent:finished', node, text)
+  emitToWindows('agent:finished', node, text)
 }
 
 export async function startHookServer(): Promise<void> {
@@ -42,7 +46,9 @@ export async function startHookServer(): Promise<void> {
       const node = req.headers['x-canvas-node']
       try {
         const input = JSON.parse(body)
-        if (input.hook_event_name !== 'Stop' || typeof node !== 'string' || !input.last_assistant_message) return
+        if (typeof node !== 'string') return
+        if (input.hook_event_name === 'Ready') return emitToWindows('agent:ready', node)
+        if (input.hook_event_name !== 'Stop' || !input.last_assistant_message) return
         emitFinished(node, input.last_assistant_message)
       } catch {
         // Not JSON: nothing to forward.
@@ -66,9 +72,13 @@ export async function startHookServer(): Promise<void> {
     allowedEnvVars: ['CHAINAGENT_SECRET', 'CHAINAGENT_NODE'],
     timeout: 5
   }
-  writeFileSync(paths.claudeSettings, JSON.stringify({ hooks: { Stop: [{ matcher: '', hooks: [claudeHook] }] } }, null, 2))
-
   writeFileSync(paths.notifyHelper, notifyHelper)
+  // SessionStart only runs once the folder is trusted, so it doubles as "this window is ready".
+  const readyHook = { type: 'command', command: helperCommand('claude-ready'), timeout: 10 }
+  writeFileSync(
+    paths.claudeSettings,
+    JSON.stringify({ hooks: { Stop: [{ matcher: '', hooks: [claudeHook] }], SessionStart: [{ matcher: '', hooks: [readyHook] }] } }, null, 2)
+  )
   const geminiHook = { type: 'command', name: 'chainagent-forward', command: helperCommand('gemini'), timeout: 10000 }
   const gemini = geminiSettings(geminiHook)
   if (gemini) writeFileSync(paths.geminiSettings, JSON.stringify(gemini, null, 2))
@@ -117,7 +127,7 @@ export function codexUserNotify(): string | null {
 export const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
 
 // Electron's own binary runs the helper as plain Node, so no separate node or curl is needed.
-export const helperArgv = (source: 'codex' | 'gemini') => [
+export const helperArgv = (source: 'codex' | 'gemini' | 'claude-ready') => [
   'env',
   'ELECTRON_RUN_AS_NODE=1',
   process.execPath,
@@ -125,4 +135,4 @@ export const helperArgv = (source: 'codex' | 'gemini') => [
   source
 ]
 
-export const helperCommand = (source: 'codex' | 'gemini') => helperArgv(source).map(shellQuote).join(' ')
+export const helperCommand = (source: 'codex' | 'gemini' | 'claude-ready') => helperArgv(source).map(shellQuote).join(' ')

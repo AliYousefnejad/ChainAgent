@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto'
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import type { ResultSetHeader, RowDataPacket } from 'mysql2'
 import type { Db } from './db'
+import { createLoginLimiter, type LoginLimiter } from './login-limiter'
 import { hashPassword, verifyPassword } from './password'
 
 type UserRow = RowDataPacket & {
@@ -13,6 +14,9 @@ type UserRow = RowDataPacket & {
   must_change_password: number
   is_active: number
   created_at: Date
+  failed_logins: number
+  locked_until: Date | null
+  lock_seconds: number | null // seconds left on a lock, computed by MySQL
 }
 
 declare module 'fastify' {
@@ -23,6 +27,8 @@ declare module 'fastify' {
 }
 
 const SESSION_DAYS = 30
+const MAX_WRONG_PASSWORDS = 5
+const LOCK_MINUTES = 15
 const PASSWORD = { type: 'string', minLength: 8, maxLength: 200 } as const
 const EMAIL = { type: 'string', format: 'email', maxLength: 255 } as const
 const ID_PARAMS = { type: 'object', required: ['id'], properties: { id: { type: 'integer', minimum: 1 } } } as const
@@ -45,16 +51,21 @@ const adminUser = (u: UserRow) => ({
   role: u.role,
   active: Boolean(u.is_active),
   pendingSetup: Boolean(u.must_change_password),
+  lockedUntil: u.lock_seconds ? u.locked_until : null,
   createdAt: u.created_at
 })
 
-export async function buildApp(db: Db, logger = false): Promise<FastifyInstance> {
-  const app = Fastify({ logger })
-  // Unknown emails are checked against this hash so both failures take the same time.
-  const dummyHash = await hashPassword(randomBytes(16).toString('hex'))
+type Options = { logger?: boolean; trustProxy?: string | false; limiter?: LoginLimiter }
+
+const USER_COLUMNS = '*, GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), locked_until)) AS lock_seconds'
+
+export async function buildApp(db: Db, { logger = false, trustProxy = false, limiter = createLoginLimiter() }: Options = {}): Promise<FastifyInstance> {
+  // trustProxy: the proxy addresses in front (e.g. '127.0.0.1'), so req.ip is the real client.
+  const options: FastifyServerOptions = { logger, trustProxy }
+  const app = Fastify(options)
 
   const findUser = async (where: string, value: unknown) => {
-    const [rows] = await db.query<UserRow[]>(`SELECT * FROM users WHERE ${where} = ?`, [value])
+    const [rows] = await db.query<UserRow[]>(`SELECT ${USER_COLUMNS} FROM users WHERE ${where} = ?`, [value])
     return rows[0]
   }
 
@@ -89,15 +100,48 @@ export async function buildApp(db: Db, logger = false): Promise<FastifyInstance>
         body: {
           type: 'object',
           required: ['email', 'password'],
-          properties: { email: { type: 'string', maxLength: 255 }, password: { type: 'string', maxLength: 200 } }
+          properties: { email: EMAIL, password: { type: 'string', maxLength: 200 } }
         }
       }
     },
     async (req, reply) => {
+      // Each try is booked before the slow password check, so parallel requests can't slip past
+      // either limit. Too many from one address also stops guessing which emails have accounts.
+      if (!limiter.attempt(req.ip)) {
+        return reply.code(429).send({ message: 'Too many failed sign-in attempts from this network. Try again later.' })
+      }
+      // Accounts are admin-created, so login says plainly whether the email is registered.
       const user = await findUser('email', req.body.email.trim().toLowerCase())
-      const valid = await verifyPassword(req.body.password, user?.password_hash ?? dummyHash)
-      if (!user || !valid) return reply.code(401).send({ message: 'Invalid email or password' })
-      if (!user.is_active) return reply.code(403).send({ message: 'Account disabled' })
+      if (!user) return reply.code(401).send({ message: 'No account found for this email. Ask your admin to add you.' })
+
+      // Book a try on the account in one statement; a locked account books nothing and is refused,
+      // even with the right password. The try that reaches the limit starts the lock.
+      const [booked] = await db.query<ResultSetHeader>(
+        `UPDATE users SET locked_until = IF(failed_logins + 1 >= ?, NOW() + INTERVAL ? MINUTE, NULL),
+           failed_logins = IF(failed_logins + 1 >= ?, 0, failed_logins + 1)
+         WHERE id = ? AND (locked_until IS NULL OR locked_until <= NOW())`,
+        [MAX_WRONG_PASSWORDS, LOCK_MINUTES, MAX_WRONG_PASSWORDS, user.id]
+      )
+      const locked = (u: UserRow) => {
+        const minutes = Math.ceil((u.lock_seconds || LOCK_MINUTES * 60) / 60)
+        return reply
+          .code(429)
+          .send({ message: `Too many wrong passwords. Try again in ${minutes} minute${minutes === 1 ? '' : 's'} or ask your admin.` })
+      }
+      if (!booked.affectedRows) return locked(user)
+
+      if (!(await verifyPassword(req.body.password, user.password_hash))) {
+        const now = (await findUser('id', user.id))!
+        if (now.lock_seconds) return locked(now)
+        const left = MAX_WRONG_PASSWORDS - now.failed_logins
+        const warning = left <= 2 ? `. ${left} ${left === 1 ? 'try' : 'tries'} left before a ${LOCK_MINUTES}-minute lock.` : ''
+        return reply.code(401).send({ message: `Wrong password${warning}` })
+      }
+
+      // Right password: give back this try's bookings and clear the account's count.
+      limiter.undo(req.ip)
+      await db.query('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', [user.id])
+      if (!user.is_active) return reply.code(403).send({ message: 'Account disabled. Ask your admin to enable it.' })
 
       const token = randomBytes(32).toString('base64url')
       await db.query(
@@ -117,6 +161,33 @@ export async function buildApp(db: Db, logger = false): Promise<FastifyInstance>
     })
 
     authed.get('/me', async (req) => publicUser(req.user))
+
+    authed.post<{ Body: { currentPassword: string; newPassword: string } }>(
+      '/me/password',
+      {
+        preHandler: requireSetupDone,
+        schema: {
+          body: {
+            type: 'object',
+            required: ['currentPassword', 'newPassword'],
+            properties: { currentPassword: { type: 'string', maxLength: 200 }, newPassword: PASSWORD }
+          }
+        }
+      },
+      async (req, reply) => {
+        const { user } = req
+        if (!(await verifyPassword(req.body.currentPassword, user.password_hash))) {
+          return reply.code(400).send({ message: 'Current password is wrong' })
+        }
+        if (req.body.newPassword === req.body.currentPassword) {
+          return reply.code(400).send({ message: 'New password must be different from the current one' })
+        }
+        await db.query('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(req.body.newPassword), user.id])
+        // Sign out everywhere else; this session stays.
+        await db.query('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', [user.id, req.tokenHash])
+        return reply.code(204).send()
+      }
+    )
 
     authed.post<{ Body: { username: string; newPassword: string } }>(
       '/me/complete-setup',
@@ -155,7 +226,7 @@ export async function buildApp(db: Db, logger = false): Promise<FastifyInstance>
         admin.addHook('preHandler', requireAdmin)
 
         admin.get('/users', async () => {
-          const [rows] = await db.query<UserRow[]>('SELECT * FROM users ORDER BY created_at DESC, id DESC')
+          const [rows] = await db.query<UserRow[]>(`SELECT ${USER_COLUMNS} FROM users ORDER BY created_at DESC, id DESC`)
           return rows.map(adminUser)
         })
 
@@ -214,7 +285,7 @@ export async function buildApp(db: Db, logger = false): Promise<FastifyInstance>
           async (req, reply) => {
             const { id } = req.params
             const [result] = await db.query<ResultSetHeader>(
-              'UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?',
+              'UPDATE users SET password_hash = ?, must_change_password = 1, failed_logins = 0, locked_until = NULL WHERE id = ?',
               [await hashPassword(req.body.tempPassword), id]
             )
             if (!result.affectedRows) return reply.code(404).send({ message: 'User not found' })

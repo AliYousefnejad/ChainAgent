@@ -19,13 +19,22 @@ describe('login', () => {
     assert.equal(body.user.password_hash, undefined)
   })
 
-  test('wrong password and unknown email return the same 401', async () => {
-    await createUser(ctx.db, { email: 'a@corp.com', password: 'password1' })
-    const wrong = await login(ctx.app, 'a@corp.com', 'nope-nope')
-    const unknown = await login(ctx.app, 'ghost@corp.com', 'password1')
-    assert.equal(wrong.statusCode, 401)
-    assert.equal(unknown.statusCode, 401)
-    assert.deepEqual(wrong.json(), unknown.json())
+  test('an email that is not in the database says so', async () => {
+    const res = await login(ctx.app, 'ghost@gmail.com', 'password1')
+    assert.equal(res.statusCode, 401)
+    assert.equal(res.json().message, 'No account found for this email. Ask your admin to add you.')
+  })
+
+  test('a known email with a wrong password says the password is wrong', async () => {
+    await createUser(ctx.db, { email: 'a@gmail.com', password: 'password1' })
+    const res = await login(ctx.app, 'a@gmail.com', 'nope-nope')
+    assert.equal(res.statusCode, 401)
+    assert.equal(res.json().message, 'Wrong password')
+  })
+
+  test('a badly formatted email is rejected before looking it up', async () => {
+    const res = await login(ctx.app, 'not-an-email', 'password1')
+    assert.equal(res.statusCode, 400)
   })
 
   test('disabled user cannot log in', async () => {

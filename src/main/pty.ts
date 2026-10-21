@@ -6,12 +6,27 @@ import { codexUserNotify, emitFinished, HOOK_SECRET, helperArgv, hookUrl, paths,
 import { commandTracker } from './shell-integration'
 
 // shellIdle: set for Shell sessions; null when the shell has no integration (not zsh).
-type Session = { pty: IPty; dispose: () => void; isShell: boolean; shellIdle: (() => boolean) | null }
+type Session = {
+  pty: IPty
+  dispose: () => void
+  isShell: boolean
+  shellIdle: (() => boolean) | null
+  lastOutput: number // ms timestamp of the latest output, 0 before any
+}
 export type DeliverResult = 'sent' | 'shell busy' | 'needs zsh' | 'closed'
 const sessions = new Map<string, Session>()
 
 // Returns an error message, or null when the session is running.
-export function spawn(wc: WebContents, id: string, agentId: string, cwd: string, cols: number, rows: number): string | null {
+// role: extra instructions for a team member; Claude gets them as an appended system prompt.
+export function spawn(
+  wc: WebContents,
+  id: string,
+  agentId: string,
+  cwd: string,
+  cols: number,
+  rows: number,
+  role?: string
+): string | null {
   if (sessions.has(id)) return null
   const agent = AGENTS.find((a) => a.id === agentId)
   if (!agent) return `Unknown agent "${agentId}"`
@@ -27,6 +42,7 @@ export function spawn(wc: WebContents, id: string, agentId: string, cwd: string,
   if (agent.id === 'claude') {
     // Hooks from --settings are merged with the user's own.
     command = `${agent.command} --settings ${shellQuote(paths.claudeSettings)}`
+    if (role) command += ` --append-system-prompt ${shellQuote(role)}`
     extraEnv = report
   } else if (agent.id === 'codex') {
     command = `${agent.command} -c ${shellQuote(`notify=${JSON.stringify(helperArgv('codex'))}`)}`
@@ -52,6 +68,8 @@ export function spawn(wc: WebContents, id: string, agentId: string, cwd: string,
     })
     const track = agent.id === 'shell' && isZsh ? commandTracker((text) => emitFinished(id, text)) : null
     const onData = pty.onData((data) => {
+      const session = sessions.get(id)
+      if (session) session.lastOutput = Date.now()
       track?.feed(data)
       if (!wc.isDestroyed()) wc.send('pty:data', id, data)
     })
@@ -63,7 +81,8 @@ export function spawn(wc: WebContents, id: string, agentId: string, cwd: string,
       pty,
       dispose: () => (onData.dispose(), onExit.dispose()),
       isShell: agent.id === 'shell',
-      shellIdle: track ? track.idle : null
+      shellIdle: track ? track.idle : null,
+      lastOutput: 0
     })
     return null
   } catch (err) {
@@ -89,6 +108,17 @@ export function deliver(id: string, text: string, submit: boolean): DeliverResul
   // Gemini turns an Enter within 40 ms of a paste into a newline, so wait a little.
   if (submit) setTimeout(() => sessions.get(id)?.pty.write('\r'), 150)
   return 'sent'
+}
+
+const QUIET_MS = 2000
+
+// Whether a window can take its first prompt. Claude reports this itself (SessionStart hook),
+// shells when zsh is idle at its prompt; Codex/Gemini once they've drawn and gone quiet.
+export function ready(id: string): boolean {
+  const session = sessions.get(id)
+  if (!session) return false
+  if (session.isShell) return !!session.shellIdle?.()
+  return session.lastOutput > 0 && Date.now() - session.lastOutput > QUIET_MS
 }
 
 export function resize(id: string, cols: number, rows: number): void {

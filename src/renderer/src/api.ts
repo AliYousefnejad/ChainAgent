@@ -1,5 +1,15 @@
 type ApiResult = { ok: boolean; status: number; data: any }
 
+export type PlanWindow = { id: string; agent: string; name: string; cwd: string }
+export type PlanStep = { id: string; agent: string; title: string; prompt: string; dependsOn: string[] }
+export type PlanResult = { steps: PlanStep[] } | { error: string }
+
+export type AgentType = 'claude' | 'codex' | 'gemini' | 'shell'
+export type TeamAgent = { key: string; type: AgentType; role: string; instructions: string; useSubagents: boolean }
+export type TeamWire = { from: string; to: string; autoRun: boolean }
+export type Team = { agents: TeamAgent[]; wires: TeamWire[]; firstAgent: string; firstPrompt: string }
+export type TeamResult = Team | { error: string }
+
 declare global {
   interface Window {
     api: {
@@ -8,9 +18,18 @@ declare global {
       request(method: string, path: string, body?: unknown): Promise<ApiResult>
       pickFolder(): Promise<string | null>
       openExternal(url: string): void
+      createPlan(task: string, windows: PlanWindow[], wires: { source: string; target: string }[], cwd: string): Promise<PlanResult>
+      transcribe(samples: Float32Array, language: string): Promise<{ text?: string; error?: string }>
+      onSttProgress(cb: (percent: number) => void): () => void
+      onFullScreen(cb: (on: boolean) => void): () => void
+      createTeam(task: string, allowed: AgentType[], cwd: string): Promise<TeamResult>
+      isClaudeTrusted(folder: string): Promise<boolean>
+      toggleFullScreen(): void
     }
     pty: {
-      spawn(id: string, agentId: string, cwd: string, cols: number, rows: number): Promise<string | null>
+      spawn(id: string, agentId: string, cwd: string, cols: number, rows: number, role?: string): Promise<string | null>
+      ready(id: string): Promise<boolean>
+      onReady(cb: (id: string) => void): () => void
       write(id: string, data: string): void
       resize(id: string, cols: number, rows: number): void
       kill(id: string): void
@@ -31,6 +50,7 @@ export type AdminUser = {
   role: Role
   active: boolean
   pendingSetup: boolean
+  lockedUntil: string | null
   createdAt: string
 }
 
@@ -59,6 +79,8 @@ export const api = {
   listUsers: () => call<AdminUser[]>('GET', '/admin/users'),
   createUser: (email: string, tempPassword: string) => call<AdminUser>('POST', '/admin/users', { email, tempPassword }),
   setActive: (id: number, active: boolean) => call<AdminUser>('PATCH', `/admin/users/${id}/status`, { active }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    call<void>('POST', '/me/password', { currentPassword, newPassword }),
   resetPassword: (id: number, tempPassword: string) =>
     call<void>('POST', `/admin/users/${id}/reset-password`, { tempPassword })
 }

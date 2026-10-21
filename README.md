@@ -20,11 +20,34 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - Shell → Shell wires aren't allowed.
 - **Privacy note:** a Shell wired to an agent sends every command and its output to that agent's provider, including things like `cat .env`. Only wire shells you're comfortable sharing.
 - **Loop guard.** A wire loop (A → B → A, or Claude → Shell → Claude) stops after 5 hand-offs, and the wire shows *loop limit reached*.
+- **Prompt box.** A floating, colourful prompt box at the bottom of the canvas.
+  - Your prompt goes to the **chain start** (a window with outgoing wires and none coming in), or any window you pick, then flows through the wires.
+  - Enter sends; Shift+Enter adds a new line.
+- **Plan mode.** Switch on **Plan** and describe the whole task.
+  - Claude (with your existing login, **read-only**: only `Read`/`Glob`/`Grep`, no MCP servers) splits it into steps for the windows on the canvas.
+  - You review the steps (edit text, reassign windows, delete steps), then press **Run plan**.
+  - Steps run in order. A step starts when the steps it depends on are done, and agent steps receive those steps' results. Shell steps run exactly the commands you reviewed.
+  - Wires are paused during a plan run, so nothing is sent twice.
+- **Team mode: Claude builds the team.** Switch the prompt box to **Team** and describe the job.
+  - Claude (read-only) decides **how many agents** are needed (up to 5) and **which role** each plays, e.g. Architect → Coder → Test runner (Shell) → Reviewer. It also decides how they're wired and writes the first prompt.
+  - The **Use** chips limit which agent types it may pick (Claude is always on; it leads).
+  - You review the team (edit roles and instructions, remove agents, toggle Auto-run, tick *sub-agents* for big implementation roles), pick the project folder, then press **Create & run**.
+  - The windows appear wired together. Claude windows get their role as an extra system prompt; Codex and Gemini get it in front of each message.
+  - The first prompt is sent once **every** window is ready. A new Claude window first asks whether you trust the folder: choose **"Yes, I trust this folder"** (the default is "No, exit").
+- **Voice input.** Click the mic, speak, click again: the text appears in the box.
+  - Speech is recognised **on your machine** with Whisper (small, 8-bit), so nothing is sent anywhere. The model (~250 MB) downloads once on first use.
+  - Switch the language with the **EN / FA** chip.
 - **Collapsible sidebar.** It collapses to a slim icon rail, and the agent icons stay draggable. The open/closed state is remembered.
 - **Team accounts.**
   - An admin adds people with an email and a temporary password.
   - On first login each person must choose a username and set a new password.
   - Admins can list, disable/enable and reset users. Disabling someone or resetting their password signs them out everywhere immediately.
+  - Anyone can change their own password with the key icon in the sidebar. Their other sessions are signed out.
+- **Sign-in protection.**
+  - Login says plainly whether an email has an account.
+  - **5 wrong passwords in a row lock that account for 15 minutes**, including attempts sent at the same time. An admin's *Reset password* unlocks it immediately, and the Users page shows a *Locked* badge.
+  - **20 failed sign-ins from one network address in 15 minutes** block that address for the rest of the window, which also stops guessing emails. This counter is kept in memory, so it resets when the API restarts.
+  - Behind a reverse proxy (nginx), set `TRUST_PROXY` to the proxy's address, e.g. `TRUST_PROXY=127.0.0.1` for nginx on the same server, so each client's real address is used. Don't trust every hop: clients could then fake their address.
 
 ## How it works
 
@@ -101,7 +124,8 @@ The app talks to `http://localhost:3100` by default. Set `CHAINAGENT_API_URL` to
 2. Drag an agent from the sidebar onto the canvas and pick the folder it should work in.
 3. Drag from the right dot of one window to the left dot of another to wire them. The arrow shows the direction.
 4. Give the first agent a task. When it finishes, its answer goes down the wire. For wires into a Shell, click **Auto-run** if the commands should run without you pressing Enter.
-5. Admins: **Users** in the sidebar opens user management.
+5. Or switch the prompt box to **Team**, describe the job, review the team Claude proposes, and press **Create & run**.
+6. Admins: **Users** in the sidebar opens user management.
 
 ## Scripts
 
@@ -122,14 +146,16 @@ Early but working. Known limits and next steps:
 - [ ] Modern UI/UX refresh that fits any desktop size
 - [ ] Verify Codex and Gemini hand-offs with real accounts. They're wired and tested with mock turns. Gemini CLI now needs a paid Gemini API key or an enterprise license, and Codex CLI sign-in is offered for paid ChatGPT plans.
 - [ ] Shell integration for bash and fish (only zsh reports commands today)
+- [ ] Let shell plan steps use earlier steps' results (today they run fixed commands)
+- [ ] Live dictation while you speak, and automatic language detection
 - [ ] Save and restore workspaces (windows, folders, wires)
 - [ ] Installers (electron-builder), with node-pty unpacked from asar
-- [ ] Login rate limiting; run the API behind HTTPS in production
+- [ ] Run the API behind HTTPS in production (deployment guide)
 - [ ] Logging out or quitting ends all running sessions (by design for now)
 
 ## Tech stack
 
-Electron 45 · electron-vite · React 19 · React Flow 12 · xterm.js 6 · node-pty · Fastify 5 · MySQL (mysql2) · TypeScript
+Electron 45 · electron-vite · React 19 · React Flow 12 · xterm.js 6 · node-pty · Transformers.js (Whisper, ONNX) · Fastify 5 · MySQL (mysql2) · TypeScript
 
 ## License
 

@@ -3,6 +3,9 @@ import { join } from 'node:path'
 import { loadToken, login, logout, request } from './auth'
 import * as pty from './pty'
 import { startHookServer } from './hooks'
+import { createPlan, createTeam, isClaudeTrusted, type PlanWindow } from './planner'
+import type { AgentType } from './team'
+import { stopSpeech, transcribe } from './stt'
 
 // /auth/* returns tokens, so the renderer may only reach it through the auth handlers.
 // Normalize first so "/./auth/..." or "/%61uth/..." can't slip past the check.
@@ -34,6 +37,23 @@ function createWindow(): void {
   win.webContents.on('will-navigate', (e) => e.preventDefault())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
+  // F11 toggles full screen. Caught here, before the page and the menu, so it works while
+  // typing in a terminal and the terminal never receives the key.
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || input.key !== 'F11') return
+    e.preventDefault()
+    win.setFullScreen(!win.isFullScreen())
+  })
+  // Also covers leaving full screen another way, e.g. from the window manager.
+  win.on('enter-full-screen', () => {
+    win.setMenuBarVisibility(false)
+    win.webContents.send('window:fullscreen', true)
+  })
+  win.on('leave-full-screen', () => {
+    win.setMenuBarVisibility(true)
+    win.webContents.send('window:fullscreen', false)
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -58,13 +78,24 @@ app.whenReady().then(async () => {
   ipcMain.handle('api:request', (_e, method: string, path: string, body?: unknown) =>
     isAllowedPath(path) ? request(method, path, body) : { ok: false, status: 403, data: { message: 'Not allowed' } }
   )
-  ipcMain.handle('pty:spawn', (e, id: string, agentId: string, cwd: string, cols: number, rows: number) =>
-    pty.spawn(e.sender, id, agentId, cwd, cols, rows)
+  ipcMain.handle('pty:spawn', (e, id: string, agentId: string, cwd: string, cols: number, rows: number, role?: string) =>
+    pty.spawn(e.sender, id, agentId, cwd, cols, rows, role)
   )
+  ipcMain.handle('pty:ready', (_e, id: string) => pty.ready(id))
+  ipcMain.handle('team:create', (_e, task: string, allowed: AgentType[], cwd: string) => createTeam(task, allowed, cwd))
+  ipcMain.handle('claude:isTrusted', (_e, folder: string) => isClaudeTrusted(folder))
+  ipcMain.on('window:toggleFullScreen', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    win?.setFullScreen(!win.isFullScreen())
+  })
   ipcMain.on('pty:write', (_e, id: string, data: string) => pty.write(id, data))
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => pty.resize(id, cols, rows))
   ipcMain.on('pty:kill', (_e, id: string) => pty.kill(id))
   ipcMain.handle('pty:deliver', (_e, id: string, text: string, submit: boolean) => pty.deliver(id, text, submit))
+  ipcMain.handle('plan:create', (_e, task: string, windows: PlanWindow[], wires: { source: string; target: string }[], cwd: string) =>
+    createPlan(task, windows, wires, cwd)
+  )
+  ipcMain.handle('stt:transcribe', (_e, samples: Float32Array, language: string) => transcribe(samples, language))
   ipcMain.handle('dialog:pickFolder', async (e) => {
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
       title: 'Choose a folder for this session',
@@ -82,7 +113,10 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', pty.killAll)
+app.on('before-quit', () => {
+  pty.killAll()
+  stopSpeech()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
