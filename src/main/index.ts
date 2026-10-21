@@ -64,7 +64,7 @@ app.whenReady().then(async () => {
   ipcMain.on('pty:write', (_e, id: string, data: string) => pty.write(id, data))
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => pty.resize(id, cols, rows))
   ipcMain.on('pty:kill', (_e, id: string) => pty.kill(id))
-  ipcMain.on('pty:deliver', (_e, id: string, text: string) => pty.deliver(id, text))
+  ipcMain.handle('pty:deliver', (_e, id: string, text: string, submit: boolean) => pty.deliver(id, text, submit))
   ipcMain.handle('dialog:pickFolder', async (e) => {
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
       title: 'Choose a folder for this session',

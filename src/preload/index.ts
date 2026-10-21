@@ -22,6 +22,6 @@ contextBridge.exposeInMainWorld('pty', {
   kill: (id: string) => ipcRenderer.send('pty:kill', id),
   onData: (cb: (id: string, data: string) => void) => listen('pty:data', cb),
   onExit: (cb: (id: string, code: number) => void) => listen('pty:exit', cb),
-  deliver: (id: string, text: string) => ipcRenderer.send('pty:deliver', id, text),
+  deliver: (id: string, text: string, submit: boolean) => ipcRenderer.invoke('pty:deliver', id, text, submit),
   onFinished: (cb: (id: string, text: string) => void) => listen('agent:finished', cb)
 })

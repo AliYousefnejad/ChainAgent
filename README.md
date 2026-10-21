@@ -9,9 +9,18 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
 - **Canvas workspace.** Pan, zoom, minimap. Agent windows can be moved and resized, and you can run several sessions of the same agent (`Claude Code #1`, `#2`, …).
 - **Real terminals.** Each window runs the real CLI in a pseudo-terminal (node-pty + xterm.js), in the folder you pick when you drop it. Colors, resizing and clickable links all work.
 - **Uses the login already on your machine.** Agents use your existing CLI login (for example `~/.claude`). If a CLI isn't logged in, its normal login flow appears inside the window. ChainAgent never sees or stores your AI credentials.
-- **Agents talk through wires.** When a Claude Code session finishes a turn, its final answer goes to every agent it's wired to, as a prompt starting with `From Claude Code #1:`. Multi-line answers arrive as one prompt.
-- **Loop guard.** A wire loop (A → B → A) stops after 5 hand-offs, and the wire shows *loop limit reached*.
-- **Safe wiring rules.** Only agents that report when they finish can send. Shell windows can't receive, so AI output is never run as shell commands.
+- **Agents talk through wires, in any direction.**
+  - When an agent finishes a turn, its final answer goes to every window it's wired to, as a prompt starting with `From Claude Code #1:`. Multi-line answers arrive as one prompt.
+  - Claude Code, Codex, Gemini and Shell can all send and receive.
+- **Shells report every command.** A Shell window sends each finished command, with its output and exit code, down its wires. So an agent can see what you (or another agent) ran.
+- **Agents can drive a shell, with a safety switch.**
+  - When an agent's answer goes into a Shell, only the commands from its ```` ```bash ```` / `sh` / `zsh` / `console` code blocks are used.
+  - They're pasted at the prompt, and you press Enter. Turn on that wire's **Auto-run** pill to run them immediately.
+  - Commands are only pasted while the shell is idle at its own zsh prompt. If something else is running there (ssh, a REPL, a long command), nothing is pasted and the wire shows *shell busy*. Shells other than zsh show *needs zsh*.
+  - Shell → Shell wires aren't allowed.
+- **Privacy note:** a Shell wired to an agent sends every command and its output to that agent's provider, including things like `cat .env`. Only wire shells you're comfortable sharing.
+- **Loop guard.** A wire loop (A → B → A, or Claude → Shell → Claude) stops after 5 hand-offs, and the wire shows *loop limit reached*.
+- **Collapsible sidebar.** It collapses to a slim icon rail, and the agent icons stay draggable. The open/closed state is remembered.
 - **Team accounts.**
   - An admin adds people with an email and a temporary password.
   - On first login each person must choose a username and set a new password.
@@ -31,9 +40,13 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
 └───────────────────────────────────────────────┘
 ```
 
-- Each Claude Code window starts with `claude --settings <file>`, which adds one **Stop hook** of type `http`. When Claude finishes a turn, the hook POSTs `last_assistant_message` to a local server in the main process. The request is authenticated with a per-launch secret.
-- Your own Claude Code settings and hooks still apply, because hooks from `--settings` are merged with them.
-- The renderer finds the wires leaving that window and types the message into each target terminal as a single pasted prompt.
+- Each agent reports a finished turn to a small server on `127.0.0.1` in the main process. It authenticates with a per-launch secret, and none of your own config files are changed:
+  - **Claude Code:** `claude --settings <file>` adds a Stop hook (type `http`). Your own Claude settings and hooks still apply, because hooks from `--settings` merge with them.
+  - **Codex:** `codex -c 'notify=[…]'` runs a tiny helper on `agent-turn-complete`.
+  - **Gemini:** `GEMINI_CLI_SYSTEM_SETTINGS_PATH` points to an `AfterAgent` hook that runs the same helper. Gemini runs hooks only in folders you've trusted in its prompt.
+  - **Shell (zsh):** the shell starts with a `ZDOTDIR` that loads your own `.zshenv`/`.zprofile`/`.zshrc`/`.zlogin`, then adds invisible markers around each command (like VS Code's shell integration).
+- The helper runs on Electron's own binary as Node, so it needs no extra `node` or `curl`.
+- The renderer finds the wires leaving that window and types the message into each target terminal as a single paste.
 - The API token lives only in the Electron main process, encrypted with the OS keychain (`safeStorage`). The renderer can't read it.
 
 ## Requirements
@@ -86,8 +99,8 @@ The app talks to `http://localhost:3100` by default. Set `CHAINAGENT_API_URL` to
 
 1. Log in. First-time users choose a username and a new password.
 2. Drag an agent from the sidebar onto the canvas and pick the folder it should work in.
-3. Drag from the right dot of one Claude Code window to the left dot of another to wire them.
-4. Give the first agent a task. When it finishes, its answer goes down the wire.
+3. Drag from the right dot of one window to the left dot of another to wire them. The arrow shows the direction.
+4. Give the first agent a task. When it finishes, its answer goes down the wire. For wires into a Shell, click **Auto-run** if the commands should run without you pressing Enter.
 5. Admins: **Users** in the sidebar opens user management.
 
 ## Scripts
@@ -107,7 +120,8 @@ The app talks to `http://localhost:3100` by default. Set `CHAINAGENT_API_URL` to
 Early but working. Known limits and next steps:
 
 - [ ] Modern UI/UX refresh that fits any desktop size
-- [ ] Finish signals for Codex and Gemini, so they can send down wires as well as receive
+- [ ] Verify Codex and Gemini hand-offs with real accounts. They're wired and tested with mock turns. Gemini CLI now needs a paid Gemini API key or an enterprise license, and Codex CLI sign-in is offered for paid ChatGPT plans.
+- [ ] Shell integration for bash and fish (only zsh reports commands today)
 - [ ] Save and restore workspaces (windows, folders, wires)
 - [ ] Installers (electron-builder), with node-pty unpacked from asar
 - [ ] Login rate limiting; run the API behind HTTPS in production

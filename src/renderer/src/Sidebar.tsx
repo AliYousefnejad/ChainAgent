@@ -1,18 +1,63 @@
+import { useState } from 'react'
 import { AGENTS, AGENT_MIME } from './agents'
 import type { User } from './api'
 
 type Props = { user: User; onToggleAdmin: () => void; onLogout: () => void }
 
+const STORAGE_KEY = 'chainagent.sidebarCollapsed'
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const Icon = ({ d }: { d: string }) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d={d} />
+  </svg>
+)
+const ICONS = {
+  collapse: 'M15 18l-6-6 6-6',
+  expand: 'M9 18l6-6-6-6',
+  users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+  logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9'
+}
+
 export default function Sidebar({ user, onToggleAdmin, onLogout }: Props) {
+  const [collapsed, setCollapsed] = useState(readCollapsed)
+
+  const toggle = () => {
+    setCollapsed(!collapsed)
+    try {
+      localStorage.setItem(STORAGE_KEY, collapsed ? '0' : '1')
+    } catch {
+      // Not saved; the sidebar still toggles for this session.
+    }
+  }
+
   return (
-    <aside className="sidebar">
-      <div className="sidebar-brand">ChainAgent</div>
+    <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
+      <div className="sidebar-header">
+        <span className="sidebar-brand">ChainAgent</span>
+        <button
+          className="icon-btn"
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={toggle}
+        >
+          <Icon d={collapsed ? ICONS.expand : ICONS.collapse} />
+        </button>
+      </div>
       <div className="sidebar-title">Agents</div>
       <div className="agent-list">
         {AGENTS.map((agent) => (
           <div
             key={agent.id}
             className="agent-card"
+            title={collapsed ? `${agent.name} — drag onto the canvas` : undefined}
             draggable
             onDragStart={(e) => {
               e.dataTransfer.setData(AGENT_MIME, agent.id)
@@ -31,18 +76,20 @@ export default function Sidebar({ user, onToggleAdmin, onLogout }: Props) {
       </div>
       <div className="sidebar-hint">Drag onto the canvas to start a session</div>
       <div className="sidebar-footer">
-        <div className="sidebar-user">
+        <div className="sidebar-user" title={collapsed ? (user.username ?? user.email) : undefined}>
           <span className="sidebar-user-name">{user.username ?? user.email}</span>
           {user.role === 'admin' && <span className="pill pill-admin">admin</span>}
         </div>
         <div className="sidebar-actions">
           {user.role === 'admin' && (
-            <button className="btn" onClick={onToggleAdmin}>
-              Users
+            <button className="btn" title="Users" aria-label="Users" onClick={onToggleAdmin}>
+              <Icon d={ICONS.users} />
+              <span className="btn-label">Users</span>
             </button>
           )}
-          <button className="btn" onClick={onLogout}>
-            Log out
+          <button className="btn" title="Log out" aria-label="Log out" onClick={onLogout}>
+            <Icon d={ICONS.logout} />
+            <span className="btn-label">Log out</span>
           </button>
         </div>
       </div>
