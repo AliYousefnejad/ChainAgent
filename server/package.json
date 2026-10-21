@@ -1,0 +1,24 @@
+{
+  "name": "chainagent-server",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "start": "tsx --env-file=.env src/index.ts",
+    "migrate": "tsx --env-file=.env src/migrate.ts",
+    "create-admin": "tsx --env-file=.env src/create-admin.ts",
+    "test": "tsx --env-file=.env --test --test-concurrency=1 test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "5.12.7",
+    "mysql2": "3.24.6"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}
