@@ -1,6 +1,6 @@
 # ChainAgent
 
-**Wire AI coding agents together on a canvas.** Drag Claude Code, Codex, Gemini or a plain shell onto a draw.io-style workspace, and each one opens as a real terminal session in a folder you choose. Draw a wire from one agent to another, and when the first agent finishes a turn, its answer is sent to the next one automatically.
+**Wire AI coding agents together on a canvas.** Drag Claude Code, Codex, Gemini, OpenCode or a plain shell onto a draw.io-style workspace, and each one opens as a real terminal session in a folder you choose. Draw a wire from one agent to another, and when the first agent finishes a turn, its answer is sent to the next one automatically.
 
 ChainAgent is a desktop app (Electron) with a small login server, so a team can use it with accounts an admin manages.
 
@@ -11,7 +11,7 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
 - **Uses the login already on your machine.** Agents use your existing CLI login (for example `~/.claude`). If a CLI isn't logged in, its normal login flow appears inside the window. ChainAgent never sees or stores your AI credentials.
 - **Agents talk through wires, in any direction.**
   - When an agent finishes a turn, its final answer goes to every window it's wired to, as a prompt starting with `From Claude Code #1:`. Multi-line answers arrive as one prompt.
-  - Claude Code, Codex, Gemini and Shell can all send and receive.
+  - Claude Code, Codex, Gemini, OpenCode and Shell can all send and receive.
 - **Shells report every command.** A Shell window sends each finished command, with its output and exit code, down its wires. So an agent can see what you (or another agent) ran.
 - **Agents can drive a shell, with a safety switch.**
   - When an agent's answer goes into a Shell, only the commands from its ```` ```bash ```` / `sh` / `zsh` / `console` code blocks are used.
@@ -32,7 +32,7 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - Claude (read-only) decides **how many agents** are needed (up to 5) and **which role** each plays, e.g. Architect → Coder → Test runner (Shell) → Reviewer. It also decides how they're wired and writes the first prompt.
   - The **Use** chips limit which agent types it may pick (Claude is always on; it leads).
   - You review the team (edit roles and instructions, remove agents, toggle Auto-run, tick *sub-agents* for big implementation roles), pick the project folder, then press **Create & run**.
-  - The windows appear wired together. Claude windows get their role as an extra system prompt; Codex and Gemini get it in front of each message.
+  - The windows appear wired together. Claude and OpenCode windows get their role in their system prompt; Codex and Gemini get it in front of each message.
   - The first prompt is sent once **every** window is ready. A new Claude window first asks whether you trust the folder: choose **"Yes, I trust this folder"** (the default is "No, exit").
 - **Voice input.** Click the mic, speak, click again: the text appears in the box.
   - Speech is recognised **on your machine** with Whisper (small, 8-bit), so nothing is sent anywhere. The model (~250 MB) downloads once on first use.
@@ -67,6 +67,7 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - **Claude Code:** `claude --settings <file>` adds a Stop hook (type `http`). Your own Claude settings and hooks still apply, because hooks from `--settings` merge with them.
   - **Codex:** `codex -c 'notify=[…]'` runs a tiny helper on `agent-turn-complete`.
   - **Gemini:** `GEMINI_CLI_SYSTEM_SETTINGS_PATH` points to an `AfterAgent` hook that runs the same helper. Gemini runs hooks only in folders you've trusted in its prompt.
+  - **OpenCode:** `OPENCODE_CONFIG_CONTENT` adds a small plugin (merged with your own OpenCode config). On `session.idle` it sends the final reply, skipping sub-agent sessions and failed turns. A team member's role is added through OpenCode's `instructions`.
   - **Shell (zsh):** the shell starts with a `ZDOTDIR` that loads your own `.zshenv`/`.zprofile`/`.zshrc`/`.zlogin`, then adds invisible markers around each command (like VS Code's shell integration).
 - The helper runs on Electron's own binary as Node, so it needs no extra `node` or `curl`.
 - The renderer finds the wires leaving that window and types the message into each target terminal as a single paste.
@@ -76,7 +77,7 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
 
 - Node.js 24+ and npm 11+
 - MySQL 8 (or compatible)
-- The agent CLIs you want to use, installed and on your `PATH`: `claude`, `codex`, `gemini`
+- The agent CLIs you want to use, installed and on your `PATH` and logged in: `claude`, `codex`, `gemini`, `opencode`
 - Linux or macOS (Windows isn't tested yet)
 
 ## Getting started

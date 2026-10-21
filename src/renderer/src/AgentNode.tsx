@@ -7,8 +7,8 @@ export type Role = { name: string; instructions: string; useSubagents: boolean }
 export type AgentNodeData = { agentId: string; sessionNo: number; cwd: string; role?: Role }
 export type AgentNodeType = Node<AgentNodeData, 'agent'>
 
-// What a team member is told about its job. Claude gets it as an appended system prompt;
-// Codex and Gemini (which have no such flag) get it in front of every message they receive.
+// What a team member is told about its job. Claude and OpenCode get it in their system prompt;
+// Codex and Gemini (which have no such option) get it in front of every message they receive.
 export function roleBrief(role: Role): string {
   return [
     `You are the ${role.name} in a ChainAgent team. ${role.instructions}`,
@@ -67,7 +67,7 @@ export default function AgentNode({ id, data, selected }: NodeProps<AgentNodeTyp
         id={id}
         agentId={data.agentId}
         cwd={data.cwd}
-        role={data.role && data.agentId === 'claude' ? roleBrief(data.role) : undefined}
+        role={data.role && (data.agentId === 'claude' || data.agentId === 'opencode') ? roleBrief(data.role) : undefined}
         run={run}
         onExit={setExitCode}
       />
