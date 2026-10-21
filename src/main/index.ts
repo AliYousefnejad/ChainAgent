@@ -36,6 +36,23 @@ function createWindow(): void {
   win.webContents.on('will-navigate', (e) => e.preventDefault())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
+  // F11 toggles the full-screen focus view. Caught here, before the page and the menu, so it
+  // works while typing in a terminal and the terminal never receives the key.
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || input.key !== 'F11') return
+    e.preventDefault()
+    win.setFullScreen(!win.isFullScreen())
+  })
+  // Also covers leaving full screen another way, e.g. from the window manager.
+  win.on('enter-full-screen', () => {
+    win.setMenuBarVisibility(false)
+    win.webContents.send('window:fullscreen', true)
+  })
+  win.on('leave-full-screen', () => {
+    win.setMenuBarVisibility(true)
+    win.webContents.send('window:fullscreen', false)
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {

@@ -544,3 +544,25 @@ input.plan-step-title { padding: 4px 8px; font-size: 13px; }
 .form-success { color: #4fd1a5; font-size: 14px; text-align: center; padding: 12px 0; }
 .sidebar-actions .btn.icon-only { flex: 0 0 auto; padding: 7px 10px; }
 .pill-locked { background: #3a2a12; color: #f0a04b; }
+
+/* F11 focus view: only the agent windows, wires and the prompt box */
+.focus-view .sidebar,
+.focus-view .topbar,
+.focus-view .react-flow__minimap,
+.focus-view .react-flow__controls { display: none; }
+.focus-hint {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(18, 21, 28, 0.92);
+  border: 1px solid var(--border);
+  pointer-events: none;
+  animation: hint-fade 2.8s ease forwards;
+}
+@keyframes hint-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }

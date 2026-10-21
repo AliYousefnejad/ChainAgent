@@ -322,6 +322,9 @@ export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [adminOpen, setAdminOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  // F11 (handled in main) puts the window in full screen; the layout then shows only the canvas.
+  const [focusView, setFocusView] = useState(false)
+  useEffect(() => window.api.onFullScreen(setFocusView), [])
 
   useEffect(() => {
     onUnauthorized(() => setUser(null))
@@ -340,7 +343,8 @@ export default function App() {
 
   return (
     <ReactFlowProvider>
-      <div className="app">
+      <div className={focusView ? 'app focus-view' : 'app'}>
+        {focusView && <div className="focus-hint">Full screen. Press F11 to exit.</div>}
         <Sidebar
           user={user}
           onToggleAdmin={() => setAdminOpen((o) => !o)}
