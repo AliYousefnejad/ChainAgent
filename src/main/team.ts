@@ -1,6 +1,6 @@
 // Team mode: what Claude is asked for when it designs a team, and the checks on its answer.
 // Kept free of Electron imports so it can be tested on its own.
-export type AgentType = 'claude' | 'codex' | 'gemini' | 'shell'
+export type AgentType = 'claude' | 'codex' | 'gemini' | 'opencode' | 'shell'
 export type TeamAgent = { key: string; type: AgentType; role: string; instructions: string; useSubagents: boolean }
 export type TeamWire = { from: string; to: string; autoRun: boolean }
 export type Team = { agents: TeamAgent[]; wires: TeamWire[]; firstAgent: string; firstPrompt: string }
@@ -42,7 +42,8 @@ export const teamSchema = (allowed: AgentType[]) => ({
 })
 
 export const teamRules = (allowed: AgentType[]) => `You design a small team of agent windows for ChainAgent to carry out the user's task.
-Each window is an AI coding agent or a shell. Wires pass a window's final reply to the next window.
+Each window is an AI coding agent (claude, codex, gemini or opencode) or a shell. Wires pass a window's final reply
+to the next window.
 - Use as few agents as the task needs (1 to ${MAX_TEAM}). A single claude is fine for simple tasks.
 - Only use these types: ${allowed.join(', ')}.
 - Give every agent one clear specialty and a short role name (e.g. Architect, Coder, Tester, Reviewer).

@@ -4,7 +4,7 @@ export type PlanWindow = { id: string; agent: string; name: string; cwd: string 
 export type PlanStep = { id: string; agent: string; title: string; prompt: string; dependsOn: string[] }
 export type PlanResult = { steps: PlanStep[] } | { error: string }
 
-export type AgentType = 'claude' | 'codex' | 'gemini' | 'shell'
+export type AgentType = 'claude' | 'codex' | 'gemini' | 'opencode' | 'shell'
 export type TeamAgent = { key: string; type: AgentType; role: string; instructions: string; useSubagents: boolean }
 export type TeamWire = { from: string; to: string; autoRun: boolean }
 export type Team = { agents: TeamAgent[]; wires: TeamWire[]; firstAgent: string; firstPrompt: string }
