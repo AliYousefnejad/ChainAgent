@@ -20,6 +20,17 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - Shell → Shell wires aren't allowed.
 - **Privacy note:** a Shell wired to an agent sends every command and its output to that agent's provider, including things like `cat .env`. Only wire shells you're comfortable sharing.
 - **Loop guard.** A wire loop (A → B → A, or Claude → Shell → Claude) stops after 5 hand-offs, and the wire shows *loop limit reached*.
+- **Prompt box.** A floating, colourful prompt box at the bottom of the canvas.
+  - Your prompt goes to the **chain start** (a window with outgoing wires and none coming in), or any window you pick, then flows through the wires.
+  - Enter sends; Shift+Enter adds a new line.
+- **Plan mode.** Switch on **Plan** and describe the whole task.
+  - Claude (with your existing login, **read-only**: only `Read`/`Glob`/`Grep`, no MCP servers) splits it into steps for the windows on the canvas.
+  - You review the steps (edit text, reassign windows, delete steps), then press **Run plan**.
+  - Steps run in order. A step starts when the steps it depends on are done, and agent steps receive those steps' results. Shell steps run exactly the commands you reviewed.
+  - Wires are paused during a plan run, so nothing is sent twice.
+- **Voice input.** Click the mic, speak, click again: the text appears in the box.
+  - Speech is recognised **on your machine** with Whisper (small, 8-bit), so nothing is sent anywhere. The model (~250 MB) downloads once on first use.
+  - Switch the language with the **EN / FA** chip.
 - **Collapsible sidebar.** It collapses to a slim icon rail, and the agent icons stay draggable. The open/closed state is remembered.
 - **Team accounts.**
   - An admin adds people with an email and a temporary password.
@@ -122,6 +133,8 @@ Early but working. Known limits and next steps:
 - [ ] Modern UI/UX refresh that fits any desktop size
 - [ ] Verify Codex and Gemini hand-offs with real accounts. They're wired and tested with mock turns. Gemini CLI now needs a paid Gemini API key or an enterprise license, and Codex CLI sign-in is offered for paid ChatGPT plans.
 - [ ] Shell integration for bash and fish (only zsh reports commands today)
+- [ ] Let shell plan steps use earlier steps' results (today they run fixed commands)
+- [ ] Live dictation while you speak, and automatic language detection
 - [ ] Save and restore workspaces (windows, folders, wires)
 - [ ] Installers (electron-builder), with node-pty unpacked from asar
 - [ ] Login rate limiting; run the API behind HTTPS in production
@@ -129,7 +142,7 @@ Early but working. Known limits and next steps:
 
 ## Tech stack
 
-Electron 45 · electron-vite · React 19 · React Flow 12 · xterm.js 6 · node-pty · Fastify 5 · MySQL (mysql2) · TypeScript
+Electron 45 · electron-vite · React 19 · React Flow 12 · xterm.js 6 · node-pty · Transformers.js (Whisper, ONNX) · Fastify 5 · MySQL (mysql2) · TypeScript
 
 ## License
 

@@ -1,5 +1,9 @@
 type ApiResult = { ok: boolean; status: number; data: any }
 
+export type PlanWindow = { id: string; agent: string; name: string; cwd: string }
+export type PlanStep = { id: string; agent: string; title: string; prompt: string; dependsOn: string[] }
+export type PlanResult = { steps: PlanStep[] } | { error: string }
+
 declare global {
   interface Window {
     api: {
@@ -8,6 +12,9 @@ declare global {
       request(method: string, path: string, body?: unknown): Promise<ApiResult>
       pickFolder(): Promise<string | null>
       openExternal(url: string): void
+      createPlan(task: string, windows: PlanWindow[], wires: { source: string; target: string }[], cwd: string): Promise<PlanResult>
+      transcribe(samples: Float32Array, language: string): Promise<{ text?: string; error?: string }>
+      onSttProgress(cb: (percent: number) => void): () => void
     }
     pty: {
       spawn(id: string, agentId: string, cwd: string, cols: number, rows: number): Promise<string | null>

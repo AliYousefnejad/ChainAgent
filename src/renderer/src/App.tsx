@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, type DragEvent } from 'react'
 import {
   addEdge,
   Background,
@@ -17,6 +17,8 @@ import {
 import Sidebar from './Sidebar'
 import AgentNode, { type AgentNodeType } from './AgentNode'
 import WireEdge, { type WireEdgeType } from './WireEdge'
+import PromptBar, { type Target } from './PromptBar'
+import PlanPanel, { type PlanState } from './PlanPanel'
 import { agentById, AGENT_MIME } from './agents'
 import { api, onUnauthorized, type User } from './api'
 import Login from './Login'
@@ -31,6 +33,7 @@ const NODE_HEIGHT = 320
 // A wire loop (A→B→A) stops forwarding after this many hand-offs.
 const MAX_HOPS = 5
 const FLASH_MS = 3000
+const SHELL_RETRY_MS = 2000
 const SHELL_BLOCK = /```(?:bash|sh|shell|zsh|console)[^\n]*\n([\s\S]*?)```/g
 
 // The commands from an answer's shell code blocks, without "$ " prompts; empty if there are none.
@@ -40,6 +43,17 @@ function shellCommands(text: string): string {
     .map((line) => line.replace(/^\$ /, '').trimEnd())
     .filter(Boolean)
     .join('\n')
+}
+
+const labelOf = (node: AgentNodeType) => `${agentById(node.data.agentId).name} #${node.data.sessionNo}`
+
+// Where a prompt enters the chain: a window with outgoing wires and none coming in (left-most first),
+// otherwise the first window.
+function chainStart(nodes: AgentNodeType[], edges: WireEdgeType[]): string | undefined {
+  const incoming = new Set(edges.map((e) => e.target))
+  const outgoing = new Set(edges.map((e) => e.source))
+  const starts = nodes.filter((n) => outgoing.has(n.id) && !incoming.has(n.id))
+  return (starts.sort((a, b) => a.position.x - b.position.x)[0] ?? nodes[0])?.id
 }
 
 function Canvas() {
@@ -54,6 +68,50 @@ function Canvas() {
   edgesRef.current = edges
   // How many wire hand-offs led to each node's current turn; a prompt you type yourself is 0.
   const hops = useRef<Record<string, number>>({})
+  // The plan lives in a ref so IPC callbacks see the latest state; redraw() re-renders.
+  const planRef = useRef<PlanState | null>(null)
+  const [, redraw] = useReducer((n: number) => n + 1, 0)
+  const [planning, setPlanning] = useState(false)
+  const retryTimer = useRef<number | undefined>(undefined)
+  const setPlan = useCallback((plan: PlanState | null) => {
+    planRef.current = plan
+    redraw()
+  }, [])
+
+  // Starts every step whose dependencies are done and whose window isn't busy with another step.
+  const schedule = useCallback(() => {
+    const plan = planRef.current
+    if (!plan || plan.phase !== 'running') return
+    clearTimeout(retryTimer.current)
+    if (plan.steps.every((s) => s.status === 'done')) {
+      return setPlan({ ...plan, phase: 'finished', note: `Plan finished: ${plan.steps.length}/${plan.steps.length} steps.` })
+    }
+    const busy = new Set(plan.steps.filter((s) => s.status === 'running').map((s) => s.agent))
+    for (const step of plan.steps) {
+      const ready = step.dependsOn.every((d) => plan.steps.find((s) => s.id === d)?.status === 'done')
+      if (step.status !== 'waiting' || busy.has(step.agent) || !ready) continue
+      busy.add(step.agent)
+      step.status = 'running'
+      const isShell = nodesRef.current.find((n) => n.id === step.agent)?.data.agentId === 'shell'
+      const deps = plan.steps.filter((s) => step.dependsOn.includes(s.id))
+      // Shell steps are the reviewed commands only; agents also get their dependencies' results.
+      const text =
+        isShell || !deps.length
+          ? step.prompt
+          : `${step.prompt}\n\nResults from earlier steps:\n${deps.map((d) => `## ${d.title}\n${d.output ?? ''}`).join('\n\n')}`
+      window.pty.deliver(step.agent, text, true).then((result) => {
+        if (planRef.current !== plan || plan.phase !== 'running' || result === 'sent') return
+        if (result === 'shell busy') {
+          step.status = 'waiting'
+          retryTimer.current = window.setTimeout(schedule, SHELL_RETRY_MS)
+          return redraw()
+        }
+        step.status = 'failed'
+        setPlan({ ...plan, phase: 'finished', note: `"${step.title}" could not start: ${result}.` })
+      })
+    }
+    setPlan({ ...plan })
+  }, [setPlan])
 
   // Labels fade after a moment, except "loop limit reached", which stays until the next send.
   const labelEdge = useCallback(
@@ -69,6 +127,17 @@ function Canvas() {
   useEffect(
     () =>
       window.pty.onFinished((id, text) => {
+        // While a plan runs, a finished turn completes that window's step and wires are paused.
+        const plan = planRef.current
+        if (plan?.phase === 'running') {
+          const step = plan.steps.find((s) => s.status === 'running' && s.agent === id)
+          if (step) {
+            step.status = 'done'
+            step.output = text
+            schedule()
+          }
+          return
+        }
         const source = nodesRef.current.find((n) => n.id === id)
         if (!source) return
         const hop = hops.current[id] ?? 0
@@ -94,8 +163,54 @@ function Canvas() {
           })
         }
       }),
-    [labelEdge]
+    [labelEdge, schedule]
   )
+
+  // A window closed while its step runs would leave the plan (and paused wires) stuck.
+  useEffect(() => {
+    const plan = planRef.current
+    if (plan?.phase !== 'running') return
+    const lost = plan.steps.find((s) => s.status === 'running' && !nodes.some((n) => n.id === s.agent))
+    if (!lost) return
+    lost.status = 'failed'
+    clearTimeout(retryTimer.current)
+    setPlan({ ...plan, phase: 'finished', note: `"${lost.title}" stopped: its window was closed.` })
+  }, [nodes, setPlan])
+
+  const targets: Target[] = nodes.map((n) => ({ id: n.id, label: labelOf(n), color: agentById(n.data.agentId).color }))
+  const plan = planRef.current
+  const planBusy = planning
+    ? 'Planning with Claude… this can take a minute'
+    : plan?.phase === 'running'
+      ? 'Plan running. Wires are paused until it finishes.'
+      : ''
+
+  const sendPrompt = async (text: string, target: string) => {
+    if (planRef.current?.phase === 'running') return 'A plan is running. Stop it first.'
+    hops.current[target] = 0
+    const result = await window.pty.deliver(target, text, true)
+    return result === 'sent' ? null : `Not sent: ${result}.`
+  }
+
+  const makePlan = async (task: string, target: string) => {
+    if (planRef.current?.phase === 'running') return 'A plan is already running.'
+    setPlanning(true)
+    const result = await window.api.createPlan(
+      task,
+      nodes.map((n) => ({ id: n.id, agent: n.data.agentId, name: labelOf(n), cwd: n.data.cwd })),
+      edges.map((e) => ({ source: e.source, target: e.target })),
+      nodes.find((n) => n.id === target)?.data.cwd ?? ''
+    )
+    setPlanning(false)
+    if ('error' in result) return result.error
+    setPlan({ task, phase: 'review', steps: result.steps.map((s) => ({ ...s, status: 'waiting' })) })
+    return null
+  }
+
+  const runningAgents = new Set(plan?.phase === 'running' ? plan.steps.filter((s) => s.status === 'running').map((s) => s.agent) : [])
+  const shownNodes = runningAgents.size
+    ? nodes.map((n) => (runningAgents.has(n.id) ? { ...n, className: 'plan-active' } : n))
+    : nodes
 
   // Shell output pasted into another shell would run as commands, so Shell → Shell is refused.
   const isValidConnection = useCallback((c: Connection | Edge) => {
@@ -163,7 +278,7 @@ function Canvas() {
         </span>
       </div>
       <ReactFlow
-        nodes={nodes}
+        nodes={shownNodes}
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
@@ -177,9 +292,26 @@ function Canvas() {
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
         <Controls />
-        <MiniMap pannable zoomable nodeColor={(n) => agentById((n as AgentNodeType).data.agentId).color} />
+        <MiniMap position="top-right" pannable zoomable nodeColor={(n) => agentById((n as AgentNodeType).data.agentId).color} />
       </ReactFlow>
       {nodes.length === 0 && <div className="empty-hint">Drag an agent from the sidebar to start</div>}
+      {plan && (
+        <PlanPanel
+          plan={plan}
+          targets={targets}
+          onChange={(steps) => setPlan({ ...plan, steps })}
+          onRun={() => {
+            planRef.current = { ...plan, phase: 'running', note: undefined, steps: plan.steps.map((s) => ({ ...s, status: 'waiting' })) }
+            schedule()
+          }}
+          onCancel={() => {
+            clearTimeout(retryTimer.current)
+            setPlan({ ...plan, phase: 'cancelled', note: 'Plan stopped. Agents still working finish their current turn.' })
+          }}
+          onClose={() => setPlan(null)}
+        />
+      )}
+      <PromptBar targets={targets} chainStart={chainStart(nodes, edges)} busy={planBusy} onSend={sendPrompt} onPlan={makePlan} />
     </main>
   )
 }

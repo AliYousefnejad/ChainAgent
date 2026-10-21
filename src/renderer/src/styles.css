@@ -347,3 +347,186 @@ input:focus { border-color: #4f8df5; }
 .admin-table td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .admin-actions { display: flex; gap: 6px; align-items: center; }
 .admin-actions input { width: 200px; padding: 6px 8px; }
+
+/* Prompt box: a floating pill with an animated gradient rim */
+@property --spin { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.prompt-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: clamp(340px, 58%, 760px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.prompt-bar {
+  width: 100%;
+  padding: 1.5px;
+  border-radius: 28px;
+  background: conic-gradient(from var(--spin), #d97757, #f0a04b, #10a37f, #4f8df5, #a77bf3, #d97757);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 24px rgba(79, 141, 245, 0.12);
+  animation: rim 8s linear infinite;
+  transition: box-shadow 0.2s;
+}
+.prompt-bar:focus-within { box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 34px rgba(167, 123, 243, 0.28); }
+.prompt-bar.plan { animation-duration: 3s; }
+@keyframes rim { to { --spin: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .prompt-bar { animation: none; } }
+.prompt-inner {
+  border-radius: 26.5px;
+  background: rgba(14, 17, 24, 0.94);
+  backdrop-filter: blur(14px);
+  padding: 8px 8px 8px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.prompt-top { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding-right: 6px; }
+.prompt-target { display: flex; align-items: center; gap: 6px; margin-right: auto; min-width: 0; }
+.prompt-target select {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  padding: 2px 0;
+  max-width: 260px;
+  cursor: pointer;
+  outline: none;
+}
+.prompt-target select option { background: var(--panel); }
+.plan-switch, .lang-chip {
+  font: inherit;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.lang-chip { padding: 3px 9px; min-width: 42px; justify-content: center; }
+.plan-switch:hover, .lang-chip:hover { color: var(--text); }
+.plan-knob { width: 14px; height: 14px; border-radius: 50%; background: #3a4150; transition: background 0.2s, transform 0.2s; }
+.plan-switch.on { color: #e9ddff; border-color: #7c5cd6; background: #241b3d; }
+.plan-switch.on .plan-knob { background: #a77bf3; transform: translateX(2px); box-shadow: 0 0 10px #a77bf3; }
+.prompt-row { display: flex; align-items: flex-end; gap: 8px; }
+.prompt-row textarea {
+  flex: 1;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  padding: 7px 0;
+  outline: none;
+  max-height: 160px;
+}
+.prompt-row textarea::placeholder { color: #6b7280; }
+.round-btn {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.12s, background 0.2s;
+}
+.round-btn:hover:not(:disabled) { transform: scale(1.06); }
+.round-btn:disabled { opacity: 0.4; cursor: default; }
+.round-btn.send { border: 0; background: linear-gradient(135deg, #4f8df5, #a77bf3); color: #fff; }
+.round-btn.mic.recording { background: #e5484d; border-color: #e5484d; color: #fff; animation: pulse 1.2s ease-out infinite; }
+.round-btn.mic.working { opacity: 0.6; cursor: progress; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.6); } 100% { box-shadow: 0 0 0 12px rgba(229, 72, 77, 0); } }
+.prompt-message {
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(14, 17, 24, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  max-width: 100%;
+  text-align: center;
+}
+
+/* Plan review / progress panel, above the prompt box */
+.plan-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 132px;
+  transform: translateX(-50%);
+  width: clamp(340px, 58%, 760px);
+  max-height: calc(100% - 200px);
+  overflow: auto;
+  z-index: 6;
+  background: rgba(18, 21, 28, 0.97);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.plan-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.plan-kicker { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #b9a2f5; }
+.plan-task { font-weight: 600; margin-top: 2px; }
+.plan-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.plan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.plan-step {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-step.running { box-shadow: 0 0 0 1px var(--accent), 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+.plan-step.done { opacity: 0.75; }
+.plan-step-head { display: flex; align-items: center; gap: 8px; }
+.plan-step-no {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+  flex-shrink: 0;
+}
+.plan-step-title { flex: 1; font-weight: 600; min-width: 0; }
+input.plan-step-title { padding: 4px 8px; font-size: 13px; }
+.plan-step-head select { font-size: 12px; padding: 4px 6px; }
+.plan-step-agent { font-size: 12px; color: var(--muted); }
+.plan-step-prompt, .plan-step-text { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+.plan-step-prompt { width: 100%; resize: vertical; }
+.plan-step-text { color: #c9cdd6; max-height: 90px; overflow: auto; }
+.plan-deps { font-size: 11px; color: var(--muted); }
+.plan-status { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #222834; color: var(--muted); }
+.plan-status.running { background: #1d2a44; color: #8fb4ff; }
+.plan-status.done { background: #14302a; color: #4fd1a5; }
+.plan-status.failed { background: #34191b; color: #f0716a; }
+.plan-note { font-size: 13px; color: #c9cdd6; }
+.plan-result pre { white-space: pre-wrap; font-size: 12px; max-height: 180px; overflow: auto; background: #07080b; padding: 10px; border-radius: 8px; }
+.plan-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* The window working on the current plan step */
+.react-flow__node.plan-active .agent-node {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 28px color-mix(in srgb, var(--accent) 45%, transparent);
+}

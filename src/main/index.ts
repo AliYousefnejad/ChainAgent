@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { loadToken, login, logout, request } from './auth'
 import * as pty from './pty'
 import { startHookServer } from './hooks'
+import { createPlan, type PlanWindow } from './planner'
+import { stopSpeech, transcribe } from './stt'
 
 // /auth/* returns tokens, so the renderer may only reach it through the auth handlers.
 // Normalize first so "/./auth/..." or "/%61uth/..." can't slip past the check.
@@ -65,6 +67,10 @@ app.whenReady().then(async () => {
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => pty.resize(id, cols, rows))
   ipcMain.on('pty:kill', (_e, id: string) => pty.kill(id))
   ipcMain.handle('pty:deliver', (_e, id: string, text: string, submit: boolean) => pty.deliver(id, text, submit))
+  ipcMain.handle('plan:create', (_e, task: string, windows: PlanWindow[], wires: { source: string; target: string }[], cwd: string) =>
+    createPlan(task, windows, wires, cwd)
+  )
+  ipcMain.handle('stt:transcribe', (_e, samples: Float32Array, language: string) => transcribe(samples, language))
   ipcMain.handle('dialog:pickFolder', async (e) => {
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
       title: 'Choose a folder for this session',
@@ -82,7 +88,10 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', pty.killAll)
+app.on('before-quit', () => {
+  pty.killAll()
+  stopSpeech()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

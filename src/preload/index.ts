@@ -5,7 +5,11 @@ contextBridge.exposeInMainWorld('api', {
   logout: () => ipcRenderer.invoke('auth:logout'),
   request: (method: string, path: string, body?: unknown) => ipcRenderer.invoke('api:request', method, path, body),
   pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
-  openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url)
+  openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url),
+  createPlan: (task: string, windows: unknown[], wires: unknown[], cwd: string) =>
+    ipcRenderer.invoke('plan:create', task, windows, wires, cwd),
+  transcribe: (samples: Float32Array, language: string) => ipcRenderer.invoke('stt:transcribe', samples, language),
+  onSttProgress: (cb: (percent: number) => void) => listen('stt:progress', cb)
 })
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
