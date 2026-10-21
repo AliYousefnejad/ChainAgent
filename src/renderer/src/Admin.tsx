@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, type AdminUser, type User } from './api'
+import { api, type AdminUser, type Role, type User } from './api'
 
 type Props = { currentUser: User; onClose: () => void }
+
+const ROLE_LABELS: Record<Role, string> = { user: 'Member', manager: 'Manager', admin: 'Admin' }
 
 export default function Admin({ currentUser, onClose }: Props) {
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -11,6 +13,12 @@ export default function Admin({ currentUser, onClose }: Props) {
   const [resetId, setResetId] = useState<number | null>(null)
   const [resetPassword, setResetPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  const [identityId, setIdentityId] = useState<number | null>(null)
+  const [gitlabUsername, setGitlabUsername] = useState('')
+  const [gitEmails, setGitEmails] = useState('')
+  const isAdmin = currentUser.role === 'admin'
+  // Managers may only manage members; the server enforces this, the UI just hides what would fail.
+  const canManage = (u: AdminUser) => isAdmin || u.role === 'user'
 
   const load = () =>
     api
@@ -52,6 +60,20 @@ export default function Admin({ currentUser, onClose }: Props) {
     }
   }
 
+  const editIdentity = (u: AdminUser) => {
+    setIdentityId(u.id)
+    setGitlabUsername(u.gitlabUsername ?? '')
+    setGitEmails(u.gitEmails.join(', '))
+  }
+
+  const saveIdentity = async (id: number) => {
+    const emails = gitEmails
+      .split(',')
+      .map((e) => e.trim())
+      .filter(Boolean)
+    if (await run(() => api.setIdentity(id, gitlabUsername.trim() || null, emails))) setIdentityId(null)
+  }
+
   return (
     <div className="admin-overlay">
       <div className="admin-header">
@@ -83,6 +105,8 @@ export default function Admin({ currentUser, onClose }: Props) {
           <tr>
             <th>Email</th>
             <th>Username</th>
+            <th>Role</th>
+            <th>Identity</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
@@ -90,11 +114,69 @@ export default function Admin({ currentUser, onClose }: Props) {
         <tbody>
           {users.map((u) => (
             <tr key={u.id}>
-              <td>
-                {u.email} {u.role === 'admin' && <span className="pill pill-admin">admin</span>}
-              </td>
+              <td>{u.email}</td>
               <td>
                 {u.username ?? '—'} {u.pendingSetup && <span className="pill">pending setup</span>}
+              </td>
+              <td>
+                {isAdmin ? (
+                  <select
+                    value={u.role}
+                    disabled={busy || u.id === currentUser.id}
+                    title={u.id === currentUser.id ? 'You can’t change your own role' : undefined}
+                    aria-label={`Role of ${u.email}`}
+                    onChange={(e) => run(() => api.setRole(u.id, e.target.value as Role))}
+                  >
+                    {(Object.keys(ROLE_LABELS) as Role[]).map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABELS[r]}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className={`pill pill-${u.role === 'user' ? 'member' : u.role}`}>{ROLE_LABELS[u.role]}</span>
+                )}
+              </td>
+              <td>
+                {identityId === u.id ? (
+                  <div className="identity-edit">
+                    <input
+                      placeholder="GitLab username"
+                      value={gitlabUsername}
+                      onChange={(e) => setGitlabUsername(e.target.value)}
+                      autoFocus
+                    />
+                    <input
+                      placeholder="Commit emails, comma-separated"
+                      value={gitEmails}
+                      onChange={(e) => setGitEmails(e.target.value)}
+                    />
+                    <div className="admin-actions">
+                      <button className="btn btn-primary" disabled={busy} onClick={() => saveIdentity(u.id)}>
+                        Save
+                      </button>
+                      <button className="btn" onClick={() => setIdentityId(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="identity-view">
+                    <div>
+                      {u.gitlabUsername ? (
+                        <span className="mono">@{u.gitlabUsername}</span>
+                      ) : (
+                        <span className="muted">No GitLab user</span>
+                      )}
+                      {u.gitEmails.length > 0 && <div className="person-email">{u.gitEmails.join(', ')}</div>}
+                    </div>
+                    {canManage(u) && (
+                      <button className="btn btn-small" onClick={() => editIdentity(u)}>
+                        Edit
+                      </button>
+                    )}
+                  </div>
+                )}
               </td>
               <td>
                 <span className={u.active ? 'pill pill-active' : 'pill pill-disabled'}>
@@ -126,7 +208,7 @@ export default function Admin({ currentUser, onClose }: Props) {
                     </>
                   ) : (
                     <>
-                      {u.id !== currentUser.id && (
+                      {u.id !== currentUser.id && canManage(u) && (
                         <button
                           className={u.active ? 'btn btn-danger' : 'btn'}
                           disabled={busy}
@@ -135,15 +217,17 @@ export default function Admin({ currentUser, onClose }: Props) {
                           {u.active ? 'Disable' : 'Enable'}
                         </button>
                       )}
-                      <button
-                        className="btn"
-                        onClick={() => {
-                          setResetId(u.id)
-                          setResetPassword('')
-                        }}
-                      >
-                        Reset password
-                      </button>
+                      {canManage(u) && (
+                        <button
+                          className="btn"
+                          onClick={() => {
+                            setResetId(u.id)
+                            setResetPassword('')
+                          }}
+                        >
+                          Reset password
+                        </button>
+                      )}
                     </>
                   )}
                 </div>

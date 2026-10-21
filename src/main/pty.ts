@@ -1,4 +1,6 @@
+import { writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { WebContents } from 'electron'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import { AGENTS } from '../renderer/src/agents'
@@ -17,7 +19,7 @@ export type DeliverResult = 'sent' | 'shell busy' | 'needs zsh' | 'closed'
 const sessions = new Map<string, Session>()
 
 // Returns an error message, or null when the session is running.
-// role: extra instructions for a team member; Claude gets them as an appended system prompt.
+// role: extra instructions for a team member; Claude and OpenCode get them in their system prompt.
 export function spawn(
   wc: WebContents,
   id: string,
@@ -54,6 +56,8 @@ export function spawn(
       ...Object.fromEntries(Object.entries(report).map(([k, v]) => [`GEMINI_CLI_${k}`, v])),
       GEMINI_CLI_SYSTEM_SETTINGS_PATH: paths.geminiSettings
     }
+  } else if (agent.id === 'opencode') {
+    extraEnv = { ...report, OPENCODE_CONFIG_CONTENT: opencodeConfig(id, role) }
   } else if (agent.id === 'shell' && isZsh) {
     extraEnv = { ZDOTDIR: paths.zshDir, ...(process.env.ZDOTDIR ? { CHAINAGENT_USER_ZDOTDIR: process.env.ZDOTDIR } : {}) }
   }
@@ -108,6 +112,26 @@ export function deliver(id: string, text: string, submit: boolean): DeliverResul
   // Gemini turns an Enter within 40 ms of a paste into a newline, so wait a little.
   if (submit) setTimeout(() => sessions.get(id)?.pty.write('\r'), 150)
   return 'sent'
+}
+
+// OpenCode merges this with the user's own config: our plugin reports finished turns, and a team
+// member's role is added to its system prompt through `instructions`. Any inline config the user
+// already set is kept.
+function opencodeConfig(id: string, role?: string): string {
+  let config: { plugin?: string[]; instructions?: string[] } = {}
+  try {
+    const own = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}')
+    if (own && typeof own === 'object' && !Array.isArray(own)) config = own
+  } catch {
+    // Not JSON: start from an empty inline config.
+  }
+  config.plugin = [...(config.plugin ?? []), paths.opencodePlugin]
+  if (role) {
+    const file = join(paths.rolesDir, `${id}.md`)
+    writeFileSync(file, role)
+    config.instructions = [...(config.instructions ?? []), file]
+  }
+  return JSON.stringify(config)
 }
 
 const QUIET_MS = 2000
