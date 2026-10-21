@@ -10,11 +10,13 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  MarkerType,
   type Connection,
   type Edge
 } from '@xyflow/react'
 import Sidebar from './Sidebar'
 import AgentNode, { type AgentNodeType } from './AgentNode'
+import WireEdge, { type WireEdgeType } from './WireEdge'
 import { agentById, AGENT_MIME } from './agents'
 import { api, onUnauthorized, type User } from './api'
 import Login from './Login'
@@ -22,16 +24,27 @@ import CompleteSetup from './CompleteSetup'
 import Admin from './Admin'
 
 const nodeTypes = { agent: AgentNode }
+const edgeTypes = { wire: WireEdge }
 
 const NODE_WIDTH = 480
 const NODE_HEIGHT = 320
 // A wire loop (A→B→A) stops forwarding after this many hand-offs.
 const MAX_HOPS = 5
 const FLASH_MS = 3000
+const SHELL_BLOCK = /```(?:bash|sh|shell|zsh|console)[^\n]*\n([\s\S]*?)```/g
+
+// The commands from an answer's shell code blocks, without "$ " prompts; empty if there are none.
+function shellCommands(text: string): string {
+  return [...text.matchAll(SHELL_BLOCK)]
+    .flatMap((m) => m[1].split('\n'))
+    .map((line) => line.replace(/^\$ /, '').trimEnd())
+    .filter(Boolean)
+    .join('\n')
+}
 
 function Canvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState<AgentNodeType>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<WireEdgeType>([])
   const { screenToFlowPosition } = useReactFlow()
   // Per-agent session counters, so a second Claude becomes "#2" even after "#1" is closed.
   const sessionCounters = useRef<Record<string, number>>({})
@@ -42,14 +55,13 @@ function Canvas() {
   // How many wire hand-offs led to each node's current turn; a prompt you type yourself is 0.
   const hops = useRef<Record<string, number>>({})
 
+  // Labels fade after a moment, except "loop limit reached", which stays until the next send.
   const labelEdge = useCallback(
-    (edgeId: string, label: string, animated: boolean) => {
-      setEdges((eds) => eds.map((e) => (e.id === edgeId ? { ...e, label, animated } : e)))
-      if (!animated) return
-      setTimeout(
-        () => setEdges((eds) => eds.map((e) => (e.id === edgeId ? { ...e, label: undefined, animated: false } : e))),
-        FLASH_MS
-      )
+    (edgeId: string, status: string, animated: boolean, sticky = false) => {
+      const set = (status: string | undefined, animated: boolean) =>
+        setEdges((eds) => eds.map((e) => (e.id === edgeId ? { ...e, animated, data: { ...e.data, status } } : e)))
+      set(status, animated)
+      if (!sticky) setTimeout(() => set(undefined, false), FLASH_MS)
     },
     [setEdges]
   )
@@ -64,28 +76,47 @@ function Canvas() {
         const from = `${agentById(source.data.agentId).name} #${source.data.sessionNo}`
         for (const edge of edgesRef.current.filter((e) => e.source === id)) {
           if (hop >= MAX_HOPS) {
-            labelEdge(edge.id, 'loop limit reached', false)
+            labelEdge(edge.id, 'loop limit reached', false, true)
             continue
           }
-          hops.current[edge.target] = hop + 1
-          window.pty.deliver(edge.target, `From ${from}:\n${text}`)
-          labelEdge(edge.id, 'sent', true)
+          const commands = edge.data?.toShell ? shellCommands(text) : null
+          if (commands === '') {
+            labelEdge(edge.id, 'no commands', false)
+            continue
+          }
+          const delivery = commands
+            ? window.pty.deliver(edge.target, commands, Boolean(edge.data?.autoRun))
+            : window.pty.deliver(edge.target, `From ${from}:\n${text}`, true)
+          delivery.then((result) => {
+            if (result !== 'sent') return labelEdge(edge.id, result, false)
+            hops.current[edge.target] = hop + 1
+            labelEdge(edge.id, 'sent', true)
+          })
         }
       }),
     [labelEdge]
   )
 
-  // Only Claude reports when it finishes a turn, and a shell would run the text as commands.
+  // Shell output pasted into another shell would run as commands, so Shell → Shell is refused.
   const isValidConnection = useCallback((c: Connection | Edge) => {
     const agentOf = (nodeId: string) => nodesRef.current.find((n) => n.id === nodeId)?.data.agentId
-    return c.source !== c.target && agentOf(c.source) === 'claude' && agentOf(c.target) !== 'shell'
+    return c.source !== c.target && !(agentOf(c.source) === 'shell' && agentOf(c.target) === 'shell')
   }, [])
 
   const onConnect = useCallback(
     (connection: Connection) => {
       const source = nodes.find((n) => n.id === connection.source)
+      const target = nodes.find((n) => n.id === connection.target)
       const color = source ? agentById(source.data.agentId).color : '#888'
-      setEdges((eds) => addEdge({ ...connection, style: { stroke: color, strokeWidth: 2 } }, eds))
+      const wire: WireEdgeType = {
+        ...connection,
+        id: `wire-${connection.source}-${connection.target}`,
+        type: 'wire',
+        style: { stroke: color, strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color },
+        data: { toShell: target?.data.agentId === 'shell', autoRun: false }
+      }
+      setEdges((eds) => addEdge(wire, eds))
     },
     [nodes, setEdges]
   )
@@ -135,6 +166,7 @@ function Canvas() {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

@@ -16,7 +16,7 @@ declare global {
       kill(id: string): void
       onData(cb: (id: string, data: string) => void): () => void
       onExit(cb: (id: string, code: number) => void): () => void
-      deliver(id: string, text: string): void
+      deliver(id: string, text: string, submit: boolean): Promise<'sent' | 'shell busy' | 'needs zsh' | 'closed'>
       onFinished(cb: (id: string, text: string) => void): () => void
     }
   }
