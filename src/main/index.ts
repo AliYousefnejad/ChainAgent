@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import { loadToken, login, logout, request } from './auth'
 import * as pty from './pty'
 import { startHookServer } from './hooks'
-import { createPlan, type PlanWindow } from './planner'
+import { createPlan, createTeam, isClaudeTrusted, type PlanWindow } from './planner'
+import type { AgentType } from './team'
 import { stopSpeech, transcribe } from './stt'
 
 // /auth/* returns tokens, so the renderer may only reach it through the auth handlers.
@@ -77,9 +78,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('api:request', (_e, method: string, path: string, body?: unknown) =>
     isAllowedPath(path) ? request(method, path, body) : { ok: false, status: 403, data: { message: 'Not allowed' } }
   )
-  ipcMain.handle('pty:spawn', (e, id: string, agentId: string, cwd: string, cols: number, rows: number) =>
-    pty.spawn(e.sender, id, agentId, cwd, cols, rows)
+  ipcMain.handle('pty:spawn', (e, id: string, agentId: string, cwd: string, cols: number, rows: number, role?: string) =>
+    pty.spawn(e.sender, id, agentId, cwd, cols, rows, role)
   )
+  ipcMain.handle('pty:ready', (_e, id: string) => pty.ready(id))
+  ipcMain.handle('team:create', (_e, task: string, allowed: AgentType[], cwd: string) => createTeam(task, allowed, cwd))
+  ipcMain.handle('claude:isTrusted', (_e, folder: string) => isClaudeTrusted(folder))
   ipcMain.on('window:toggleFullScreen', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     win?.setFullScreen(!win.isFullScreen())

@@ -15,12 +15,13 @@ import {
   type Edge
 } from '@xyflow/react'
 import Sidebar from './Sidebar'
-import AgentNode, { type AgentNodeType } from './AgentNode'
+import AgentNode, { roleBrief, type AgentNodeType } from './AgentNode'
+import TeamPanel, { handOffOrder, type TeamState } from './TeamPanel'
 import WireEdge, { type WireEdgeType } from './WireEdge'
 import PromptBar, { type Target } from './PromptBar'
 import PlanPanel, { type PlanState } from './PlanPanel'
 import { agentById, AGENT_MIME } from './agents'
-import { api, onUnauthorized, type User } from './api'
+import { api, onUnauthorized, type AgentType, type Team, type User } from './api'
 import Login from './Login'
 import CompleteSetup from './CompleteSetup'
 import Admin from './Admin'
@@ -63,10 +64,27 @@ const FullScreenIcon = ({ on }: { on: boolean }) => (
   </svg>
 )
 
+function makeWire(source: AgentNodeType, target: AgentNodeType, autoRun = false): WireEdgeType {
+  const color = agentById(source.data.agentId).color
+  return {
+    id: `wire-${source.id}-${target.id}`,
+    source: source.id,
+    target: target.id,
+    type: 'wire',
+    style: { stroke: color, strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color },
+    data: { toShell: target.data.agentId === 'shell', autoRun }
+  }
+}
+
+const TEAM_GAP = 80
+const TEAM_PER_ROW = 3
+const READY_POLL_MS = 700
+
 function Canvas({ fullScreen }: { fullScreen: boolean }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<AgentNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<WireEdgeType>([])
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
   // Per-agent session counters, so a second Claude becomes "#2" even after "#1" is closed.
   const sessionCounters = useRef<Record<string, number>>({})
   const nodesRef = useRef(nodes)
@@ -83,6 +101,23 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
   const setPlan = useCallback((plan: PlanState | null) => {
     planRef.current = plan
     redraw()
+  }, [])
+  // Team mode, kept the same way. Claude windows report "ready" through their SessionStart hook.
+  const teamRef = useRef<TeamState | null>(null)
+  const [designing, setDesigning] = useState(false)
+  const readyClaude = useRef(new Set<string>())
+  const startTimer = useRef<number | undefined>(undefined)
+  const setTeam = useCallback((team: TeamState | null) => {
+    teamRef.current = team
+    redraw()
+  }, [])
+  useEffect(() => window.pty.onReady((id) => readyClaude.current.add(id)), [])
+
+  // Codex and Gemini team members have no system-prompt flag, so their role leads every message.
+  const toAgent = useCallback((nodeId: string, text: string) => {
+    const node = nodesRef.current.find((n) => n.id === nodeId)
+    const role = node?.data.role
+    return role && (node.data.agentId === 'codex' || node.data.agentId === 'gemini') ? `${roleBrief(role)}\n\n${text}` : text
   }, [])
 
   // Starts every step whose dependencies are done and whose window isn't busy with another step.
@@ -106,7 +141,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
         isShell || !deps.length
           ? step.prompt
           : `${step.prompt}\n\nResults from earlier steps:\n${deps.map((d) => `## ${d.title}\n${d.output ?? ''}`).join('\n\n')}`
-      window.pty.deliver(step.agent, text, true).then((result) => {
+      window.pty.deliver(step.agent, isShell ? text : toAgent(step.agent, text), true).then((result) => {
         if (planRef.current !== plan || plan.phase !== 'running' || result === 'sent') return
         if (result === 'shell busy') {
           step.status = 'waiting'
@@ -118,7 +153,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
       })
     }
     setPlan({ ...plan })
-  }, [setPlan])
+  }, [setPlan, toAgent])
 
   // Labels fade after a moment, except "loop limit reached", which stays until the next send.
   const labelEdge = useCallback(
@@ -162,7 +197,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
           }
           const delivery = commands
             ? window.pty.deliver(edge.target, commands, Boolean(edge.data?.autoRun))
-            : window.pty.deliver(edge.target, `From ${from}:\n${text}`, true)
+            : window.pty.deliver(edge.target, toAgent(edge.target, `From ${from}:\n${text}`), true)
           delivery.then((result) => {
             if (result !== 'sent') return labelEdge(edge.id, result, false)
             hops.current[edge.target] = hop + 1
@@ -170,7 +205,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
           })
         }
       }),
-    [labelEdge, schedule]
+    [labelEdge, schedule, toAgent]
   )
 
   // A window closed while its step runs would leave the plan (and paused wires) stuck.
@@ -186,7 +221,10 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
 
   const targets: Target[] = nodes.map((n) => ({ id: n.id, label: labelOf(n), color: agentById(n.data.agentId).color }))
   const plan = planRef.current
-  const planBusy = planning
+  const team = teamRef.current
+  const planBusy = designing
+    ? 'Designing a team with Claude… this can take a minute'
+    : planning
     ? 'Planning with Claude… this can take a minute'
     : plan?.phase === 'running'
       ? 'Plan running. Wires are paused until it finishes.'
@@ -195,12 +233,14 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
   const sendPrompt = async (text: string, target: string) => {
     if (planRef.current?.phase === 'running') return 'A plan is running. Stop it first.'
     hops.current[target] = 0
-    const result = await window.pty.deliver(target, text, true)
+    const isShell = nodes.find((n) => n.id === target)?.data.agentId === 'shell'
+    const result = await window.pty.deliver(target, isShell ? text : toAgent(target, text), true)
     return result === 'sent' ? null : `Not sent: ${result}.`
   }
 
   const makePlan = async (task: string, target: string) => {
     if (planRef.current?.phase === 'running') return 'A plan is already running.'
+    if (teamRef.current) return 'Close the team panel first.'
     setPlanning(true)
     const result = await window.api.createPlan(
       task,
@@ -212,6 +252,97 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
     if ('error' in result) return result.error
     setPlan({ task, phase: 'review', steps: result.steps.map((s) => ({ ...s, status: 'waiting' })) })
     return null
+  }
+
+  const makeTeam = async (task: string, allowed: AgentType[]) => {
+    if (planRef.current) return 'Close the plan panel first.'
+    if (teamRef.current && teamRef.current.phase !== 'running' && teamRef.current.phase !== 'stopped') {
+      return 'A team is already being set up.'
+    }
+    const cwd = await window.api.pickFolder()
+    if (!cwd) return 'Pick the project folder for the team.'
+    setDesigning(true)
+    const [result, trusted] = await Promise.all([window.api.createTeam(task, allowed, cwd), window.api.isClaudeTrusted(cwd)])
+    setDesigning(false)
+    if ('error' in result) return result.error
+    setTeam({ task, cwd, team: result, trusted, phase: 'review' })
+    return null
+  }
+
+  // Waits until every team window can take input, then starts the chain at the first agent.
+  const startWhenReady = useCallback(
+    (ids: string[], firstId: string, firstRole: string) => {
+      const tick = async () => {
+        const state = teamRef.current
+        if (!state || state.phase !== 'starting') return
+        const ready = (
+          await Promise.all(
+            ids.map((id) => {
+              const node = nodesRef.current.find((n) => n.id === id)
+              if (!node) return false
+              return node.data.agentId === 'claude' ? readyClaude.current.has(id) : window.pty.ready(id)
+            })
+          )
+        ).filter(Boolean).length
+        if (ready < ids.length) {
+          if (ready !== state.ready) setTeam({ ...state, ready })
+          startTimer.current = window.setTimeout(tick, READY_POLL_MS)
+          return
+        }
+        hops.current[firstId] = 0
+        const result = await window.pty.deliver(firstId, toAgent(firstId, state.team.firstPrompt), true)
+        setTeam({
+          ...state,
+          ready,
+          phase: result === 'sent' ? 'running' : 'stopped',
+          note:
+            result === 'sent'
+              ? `Team started: the first prompt went to the ${firstRole}. Follow the hand-offs on the wires.`
+              : `Couldn't send the first prompt: ${result}.`
+        })
+      }
+      tick()
+    },
+    [setTeam, toAgent]
+  )
+
+  // Creates the team's windows in a free area, wires them, then waits for them to be ready.
+  const createTeam = (state: TeamState, team: Team) => {
+    const agents = handOffOrder(team)
+    const bottom = Math.max(0, ...nodes.map((n) => n.position.y + (n.height ?? NODE_HEIGHT)))
+    const top = nodes.length ? bottom + TEAM_GAP * 2 : TEAM_GAP
+    const created = new Map<string, AgentNodeType>()
+    agents.forEach((agent, i) => {
+      const sessionNo = (sessionCounters.current[agent.type] ?? 0) + 1
+      sessionCounters.current[agent.type] = sessionNo
+      created.set(agent.key, {
+        id: `${agent.type}-${sessionNo}`,
+        type: 'agent',
+        position: {
+          x: TEAM_GAP + (i % TEAM_PER_ROW) * (NODE_WIDTH + TEAM_GAP),
+          y: top + Math.floor(i / TEAM_PER_ROW) * (NODE_HEIGHT + TEAM_GAP)
+        },
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+        dragHandle: '.agent-node-header',
+        data: {
+          agentId: agent.type,
+          sessionNo,
+          cwd: state.cwd,
+          role: { name: agent.role, instructions: agent.instructions, useSubagents: agent.useSubagents }
+        }
+      })
+    })
+    const newNodes = [...created.values()]
+    const wires = team.wires.map((w) => makeWire(created.get(w.from)!, created.get(w.to)!, w.autoRun))
+    nodesRef.current = [...nodesRef.current, ...newNodes]
+    setNodes((nds) => nds.concat(newNodes))
+    setEdges((eds) => eds.concat(wires))
+    setTimeout(() => fitView({ nodes: newNodes.map((n) => ({ id: n.id })), padding: 0.15, duration: 400 }), 60)
+
+    setTeam({ ...state, team, phase: 'starting', ready: 0, note: undefined })
+    const first = team.agents.find((a) => a.key === team.firstAgent)!
+    startWhenReady(newNodes.map((n) => n.id), created.get(first.key)!.id, first.role)
   }
 
   const runningAgents = new Set(plan?.phase === 'running' ? plan.steps.filter((s) => s.status === 'running').map((s) => s.agent) : [])
@@ -229,16 +360,7 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
     (connection: Connection) => {
       const source = nodes.find((n) => n.id === connection.source)
       const target = nodes.find((n) => n.id === connection.target)
-      const color = source ? agentById(source.data.agentId).color : '#888'
-      const wire: WireEdgeType = {
-        ...connection,
-        id: `wire-${connection.source}-${connection.target}`,
-        type: 'wire',
-        style: { stroke: color, strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, color },
-        data: { toShell: target?.data.agentId === 'shell', autoRun: false }
-      }
-      setEdges((eds) => addEdge(wire, eds))
+      if (source && target) setEdges((eds) => addEdge(makeWire(source, target), eds))
     },
     [nodes, setEdges]
   )
@@ -275,6 +397,35 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
     [screenToFlowPosition, setNodes]
   )
 
+  // The plan or team panel sits right above the prompt box.
+  const panel = plan ? (
+    <PlanPanel
+      plan={plan}
+      targets={targets}
+      onChange={(steps) => setPlan({ ...plan, steps })}
+      onRun={() => {
+        planRef.current = { ...plan, phase: 'running', note: undefined, steps: plan.steps.map((s) => ({ ...s, status: 'waiting' })) }
+        schedule()
+      }}
+      onCancel={() => {
+        clearTimeout(retryTimer.current)
+        setPlan({ ...plan, phase: 'cancelled', note: 'Plan stopped. Agents still working finish their current turn.' })
+      }}
+      onClose={() => setPlan(null)}
+    />
+  ) : team ? (
+    <TeamPanel
+      state={team}
+      onChange={(changed) => setTeam({ ...team, team: changed })}
+      onCreate={() => createTeam(team, team.team)}
+      onCancel={() => {
+        clearTimeout(startTimer.current)
+        setTeam({ ...team, phase: 'stopped', note: 'Not started. The windows stay; send a prompt yourself when ready.' })
+      }}
+      onClose={() => setTeam(null)}
+    />
+  ) : null
+
   return (
     <main className="canvas">
       <div className="topbar">
@@ -310,23 +461,15 @@ function Canvas({ fullScreen }: { fullScreen: boolean }) {
         <MiniMap position="top-right" pannable zoomable nodeColor={(n) => agentById((n as AgentNodeType).data.agentId).color} />
       </ReactFlow>
       {nodes.length === 0 && <div className="empty-hint">Drag an agent from the sidebar to start</div>}
-      {plan && (
-        <PlanPanel
-          plan={plan}
-          targets={targets}
-          onChange={(steps) => setPlan({ ...plan, steps })}
-          onRun={() => {
-            planRef.current = { ...plan, phase: 'running', note: undefined, steps: plan.steps.map((s) => ({ ...s, status: 'waiting' })) }
-            schedule()
-          }}
-          onCancel={() => {
-            clearTimeout(retryTimer.current)
-            setPlan({ ...plan, phase: 'cancelled', note: 'Plan stopped. Agents still working finish their current turn.' })
-          }}
-          onClose={() => setPlan(null)}
-        />
-      )}
-      <PromptBar targets={targets} chainStart={chainStart(nodes, edges)} busy={planBusy} onSend={sendPrompt} onPlan={makePlan} />
+      <PromptBar
+        targets={targets}
+        chainStart={chainStart(nodes, edges)}
+        busy={planBusy}
+        onSend={sendPrompt}
+        onPlan={makePlan}
+        onTeam={makeTeam}
+        panel={panel}
+      />
     </main>
   )
 }

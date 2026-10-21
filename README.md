@@ -28,6 +28,12 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - You review the steps (edit text, reassign windows, delete steps), then press **Run plan**.
   - Steps run in order. A step starts when the steps it depends on are done, and agent steps receive those steps' results. Shell steps run exactly the commands you reviewed.
   - Wires are paused during a plan run, so nothing is sent twice.
+- **Team mode: Claude builds the team.** Switch the prompt box to **Team** and describe the job.
+  - Claude (read-only) decides **how many agents** are needed (up to 5) and **which role** each plays, e.g. Architect → Coder → Test runner (Shell) → Reviewer. It also decides how they're wired and writes the first prompt.
+  - The **Use** chips limit which agent types it may pick (Claude is always on; it leads).
+  - You review the team (edit roles and instructions, remove agents, toggle Auto-run, tick *sub-agents* for big implementation roles), pick the project folder, then press **Create & run**.
+  - The windows appear wired together. Claude windows get their role as an extra system prompt; Codex and Gemini get it in front of each message.
+  - The first prompt is sent once **every** window is ready. A new Claude window first asks whether you trust the folder: choose **"Yes, I trust this folder"** (the default is "No, exit").
 - **Voice input.** Click the mic, speak, click again: the text appears in the box.
   - Speech is recognised **on your machine** with Whisper (small, 8-bit), so nothing is sent anywhere. The model (~250 MB) downloads once on first use.
   - Switch the language with the **EN / FA** chip.
@@ -118,7 +124,8 @@ The app talks to `http://localhost:3100` by default. Set `CHAINAGENT_API_URL` to
 2. Drag an agent from the sidebar onto the canvas and pick the folder it should work in.
 3. Drag from the right dot of one window to the left dot of another to wire them. The arrow shows the direction.
 4. Give the first agent a task. When it finishes, its answer goes down the wire. For wires into a Shell, click **Auto-run** if the commands should run without you pressing Enter.
-5. Admins: **Users** in the sidebar opens user management.
+5. Or switch the prompt box to **Team**, describe the job, review the team Claude proposes, and press **Create & run**.
+6. Admins: **Users** in the sidebar opens user management.
 
 ## Scripts
 

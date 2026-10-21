@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { shellQuote } from './hooks'
+import { teamRules, teamSchema, validateTeam, type AgentType, type TeamResult } from './team'
 
 export type PlanWindow = { id: string; agent: string; name: string; cwd: string }
 export type PlanStep = { id: string; agent: string; title: string; prompt: string; dependsOn: string[] }
@@ -39,13 +42,13 @@ Split the user's task into a few steps and give each step to one of the listed w
 - Use dependsOn (ids of earlier steps) only for real dependencies; independent steps run in parallel.
 - Keep the plan short. Do not carry out the task yourself; you may read files to plan better.`
 
-export function createPlan(
+export async function createPlan(
   task: string,
   windows: PlanWindow[],
   wires: { source: string; target: string }[],
   cwd: string
 ): Promise<PlanResult> {
-  if (!windows.length) return Promise.resolve({ error: 'Add an agent to the canvas first.' })
+  if (!windows.length) return { error: 'Add an agent to the canvas first.' }
 
   const input = [
     `Task:\n${task}`,
@@ -55,23 +58,55 @@ export function createPlan(
     .filter(Boolean)
     .join('\n\n')
 
-  // Read-only planning: only file-reading tools, no MCP servers (they could have side effects),
-  // and no canvas hook, so nothing is forwarded.
+  const result = await askClaude(input, SCHEMA, RULES, cwd)
+  if ('error' in result) return result
+  if (!result.output?.steps) return { error: 'Planning failed: no plan returned' }
+  return validate(result.output.steps, windows)
+}
+
+// --- Team mode: Claude designs the team (how many agents, which roles, how they're wired). ---
+
+export async function createTeam(task: string, allowed: AgentType[], cwd: string): Promise<TeamResult> {
+  if (!allowed.includes('claude')) return { error: 'Claude must be allowed: it leads the team.' }
+  const result = await askClaude(`Task:\n${task}\n\nProject folder: ${cwd}`, teamSchema(allowed), teamRules(allowed), cwd)
+  if ('error' in result) return result
+  return validateTeam(result.output, allowed)
+}
+
+// Read-only: has Claude already been told to trust this folder (or a parent)? Used to warn
+// that each new Claude window will first ask. The app never changes this itself.
+export function isClaudeTrusted(folder: string): boolean {
+  try {
+    const projects = JSON.parse(readFileSync(join(homedir(), '.claude.json'), 'utf8')).projects ?? {}
+    for (let dir = folder; ; dir = dirname(dir)) {
+      if (projects[dir]?.hasTrustDialogAccepted) return true
+      if (dirname(dir) === dir) return false
+    }
+  } catch {
+    return false
+  }
+}
+
+// --- Shared: run Claude headless and read its structured answer. ---
+
+// Read-only: only file-reading tools, no MCP servers (they could have side effects),
+// and no canvas hook, so nothing is forwarded.
+function askClaude(input: string, schema: object, rules: string, cwd: string): Promise<{ output: any } | { error: string }> {
   const command = [
     'claude', '-p',
     '--output-format', 'json',
     '--max-turns', '6',
     '--tools', 'Read,Glob,Grep',
     '--strict-mcp-config',
-    '--json-schema', JSON.stringify(SCHEMA),
-    '--append-system-prompt', RULES
+    '--json-schema', JSON.stringify(schema),
+    '--append-system-prompt', rules
   ]
     .map(shellQuote)
     .join(' ')
 
   return new Promise((resolve) => {
     let settled = false
-    const finish = (result: PlanResult) => {
+    const finish = (result: { output: any } | { error: string }) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -83,20 +118,20 @@ export function createPlan(
     const child = spawn(shell, ['-l', '-i', '-c', `exec ${command}`], { cwd: cwd || homedir(), stdio: 'pipe' })
     const timer = setTimeout(() => {
       child.kill()
-      finish({ error: 'The planner took longer than 3 minutes. Try a shorter task.' })
+      finish({ error: 'Claude took longer than 3 minutes. Try a shorter task.' })
     }, TIMEOUT_MS)
 
     let out = ''
     child.stdout.on('data', (chunk) => (out += chunk))
     child.stderr.resume() // drain it, or a chatty login shell could fill the pipe and stall Claude
     child.on('error', (err) => finish({ error: `Could not start Claude: ${err.message}` }))
-    child.on('close', () => finish(parseResult(out, windows)))
+    child.on('close', () => finish(parseResult(out)))
     child.stdin.end(input)
   })
 }
 
 // The shell's startup files may print text first, so look for Claude's result line from the end.
-function parseResult(out: string, windows: PlanWindow[]): PlanResult {
+function parseResult(out: string): { output: any } | { error: string } {
   const result = out
     .split('\n')
     .reverse()
@@ -109,11 +144,11 @@ function parseResult(out: string, windows: PlanWindow[]): PlanResult {
     })
     .find((value) => value?.type === 'result')
 
-  if (!result) return { error: 'Claude did not return a plan. Is `claude` installed and logged in?' }
-  if (result.is_error || !result.structured_output?.steps) {
-    return { error: `Planning failed: ${result.result || result.subtype || 'no plan returned'}` }
+  if (!result) return { error: 'Claude did not answer. Is `claude` installed and logged in?' }
+  if (result.is_error || !result.structured_output) {
+    return { error: `Claude failed: ${result.result || result.subtype || 'no answer returned'}` }
   }
-  return validate(result.structured_output.steps, windows)
+  return { output: result.structured_output }
 }
 
 function validate(steps: PlanStep[], windows: PlanWindow[]): PlanResult {

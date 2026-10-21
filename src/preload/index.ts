@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('api', {
   transcribe: (samples: Float32Array, language: string) => ipcRenderer.invoke('stt:transcribe', samples, language),
   onSttProgress: (cb: (percent: number) => void) => listen('stt:progress', cb),
   onFullScreen: (cb: (on: boolean) => void) => listen('window:fullscreen', cb),
+  createTeam: (task: string, allowed: string[], cwd: string) => ipcRenderer.invoke('team:create', task, allowed, cwd),
+  isClaudeTrusted: (folder: string) => ipcRenderer.invoke('claude:isTrusted', folder),
   toggleFullScreen: () => ipcRenderer.send('window:toggleFullScreen')
 })
 
@@ -21,8 +23,10 @@ function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void):
 }
 
 contextBridge.exposeInMainWorld('pty', {
-  spawn: (id: string, agentId: string, cwd: string, cols: number, rows: number) =>
-    ipcRenderer.invoke('pty:spawn', id, agentId, cwd, cols, rows),
+  spawn: (id: string, agentId: string, cwd: string, cols: number, rows: number, role?: string) =>
+    ipcRenderer.invoke('pty:spawn', id, agentId, cwd, cols, rows, role),
+  ready: (id: string) => ipcRenderer.invoke('pty:ready', id),
+  onReady: (cb: (id: string) => void) => listen('agent:ready', cb),
   write: (id: string, data: string) => ipcRenderer.send('pty:write', id, data),
   resize: (id: string, cols: number, rows: number) => ipcRenderer.send('pty:resize', id, cols, rows),
   kill: (id: string) => ipcRenderer.send('pty:kill', id),

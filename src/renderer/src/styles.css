@@ -397,24 +397,53 @@ input:focus { border-color: #4f8df5; }
   outline: none;
 }
 .prompt-target select option { background: var(--panel); }
-.plan-switch, .lang-chip {
+.lang-chip {
   font: inherit;
   font-size: 12px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px 3px 4px;
+  justify-content: center;
+  padding: 3px 9px;
+  min-width: 42px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--muted);
   cursor: pointer;
 }
-.lang-chip { padding: 3px 9px; min-width: 42px; justify-content: center; }
-.plan-switch:hover, .lang-chip:hover { color: var(--text); }
-.plan-knob { width: 14px; height: 14px; border-radius: 50%; background: #3a4150; transition: background 0.2s, transform 0.2s; }
-.plan-switch.on { color: #e9ddff; border-color: #7c5cd6; background: #241b3d; }
-.plan-switch.on .plan-knob { background: #a77bf3; transform: translateX(2px); box-shadow: 0 0 10px #a77bf3; }
+.lang-chip:hover { color: var(--text); }
+.mode-switch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.mode-switch button {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mode-switch button:hover { color: var(--text); }
+.mode-switch button.on { background: #2d2350; color: #e9ddff; box-shadow: 0 0 10px rgba(167, 123, 243, 0.35); }
+.team-types { display: flex; align-items: center; gap: 5px; margin-right: auto; flex-wrap: wrap; min-width: 0; }
+.type-chip {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.6;
+}
+.type-chip.on { opacity: 1; color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .prompt-row { display: flex; align-items: flex-end; gap: 8px; }
 .prompt-row textarea {
   flex: 1;
@@ -462,14 +491,9 @@ input:focus { border-color: #4f8df5; }
 
 /* Plan review / progress panel, above the prompt box */
 .plan-panel {
-  position: absolute;
-  left: 50%;
-  bottom: 132px;
-  transform: translateX(-50%);
-  width: clamp(340px, 58%, 760px);
-  max-height: calc(100% - 200px);
+  width: 100%;
+  max-height: calc(100vh - 260px);
   overflow: auto;
-  z-index: 6;
   background: rgba(18, 21, 28, 0.97);
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -562,3 +586,15 @@ input.plan-step-title { padding: 4px 8px; font-size: 13px; }
   animation: hint-fade 2.8s ease forwards;
 }
 @keyframes hint-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+
+/* Team panel extras (shares the plan panel layout) */
+.team-folder { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.team-wires, .team-first { display: flex; flex-direction: column; gap: 6px; }
+.team-wire { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.plan-note.warn { color: #f0c27a; }
+.agent-node-role { color: var(--accent); }
+/* Long task text or folder paths wrap instead of widening the panel */
+.plan-panel { overflow-x: hidden; }
+.plan-head > div { flex: 1; min-width: 0; }
+.plan-task { overflow-wrap: anywhere; }
