@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
+import * as activity from './activity'
 import { loadToken, login, logout, request } from './auth'
 import * as pty from './pty'
 import { startHookServer } from './hooks'
@@ -74,7 +75,18 @@ app.whenReady().then(async () => {
   loadToken()
   await startHookServer()
   ipcMain.handle('auth:login', (_e, email: string, password: string) => login(email, password))
-  ipcMain.handle('auth:logout', () => logout())
+  // Queued activity belongs to the user signing out, so it goes before the token does. The page
+  // closes the windows on sign-out anyway; closing them here first records those closes for this user.
+  ipcMain.handle('auth:logout', async () => {
+    pty.killAll()
+    await activity.flush()
+    activity.clear()
+    await logout()
+  })
+  ipcMain.on('activity:track', (_e, type: string, nodeId?: string, detail?: string) =>
+    activity.fromRenderer(type, nodeId, detail)
+  )
+  activity.startFlushing()
   ipcMain.handle('api:request', (_e, method: string, path: string, body?: unknown) =>
     isAllowedPath(path) ? request(method, path, body) : { ok: false, status: 403, data: { message: 'Not allowed' } }
   )
@@ -113,9 +125,15 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', () => {
+// Quitting waits once for the last activity to be sent (the closes of the windows included).
+let flushedOnQuit = false
+app.on('before-quit', (e) => {
   pty.killAll()
   stopSpeech()
+  if (flushedOnQuit) return
+  e.preventDefault()
+  flushedOnQuit = true
+  Promise.race([activity.flush(), new Promise((r) => setTimeout(r, 3000))]).finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {

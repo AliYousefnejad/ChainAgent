@@ -5,6 +5,7 @@ import type { WebContents } from 'electron'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import { AGENTS } from '../renderer/src/agents'
 import { codexUserNotify, emitFinished, HOOK_SECRET, helperArgv, hookUrl, paths, shellQuote } from './hooks'
+import * as activity from './activity'
 import { commandTracker } from './shell-integration'
 
 // shellIdle: set for Shell sessions; null when the shell has no integration (not zsh).
@@ -79,6 +80,7 @@ export function spawn(
     })
     const onExit = pty.onExit(({ exitCode }) => {
       sessions.delete(id)
+      activity.windowClosed(id)
       if (!wc.isDestroyed()) wc.send('pty:exit', id, exitCode)
     })
     sessions.set(id, {
@@ -88,6 +90,7 @@ export function spawn(
       shellIdle: track ? track.idle : null,
       lastOutput: 0
     })
+    activity.windowOpened(id, agent.id, cwd)
     return null
   } catch (err) {
     return (err as Error).message
@@ -154,6 +157,7 @@ export function kill(id: string): void {
   const session = sessions.get(id)
   if (!session) return
   sessions.delete(id)
+  activity.windowClosed(id)
   session.dispose()
   session.pty.kill()
 }

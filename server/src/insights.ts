@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify'
 import type { RowDataPacket } from 'mysql2'
+import { ALL_TYPES } from './activity'
 import type { Db } from './db'
 
 // Contribution numbers per person and project, built from the synced GitLab data.
@@ -17,7 +18,22 @@ const QUERY = {
 const DEFAULT_DAYS = 30
 const MR_LIMIT = 500
 
-type Query = { from?: string; to?: string; project?: number; author?: number }
+type Query = { from?: string; to?: string; project?: number; author?: number; user?: number; type?: string }
+const LOG_QUERY = {
+  type: 'object',
+  properties: { ...QUERY.properties, user: { type: 'integer', minimum: 1 }, type: { type: 'string', enum: ALL_TYPES } }
+} as const
+const LOG_LIMIT = 500
+// Usage columns in the People table, from the app's activity events.
+const USAGE: Record<string, string> = {
+  active: 'activeMinutes',
+  window_opened: 'windows',
+  prompt: 'prompts',
+  turn_finished: 'turns',
+  handoff: 'handoffs',
+  plan_run: 'plans',
+  team_run: 'teams'
+}
 
 // [start, end) in UTC; `to` is inclusive, so the end is the start of the next day.
 function rangeOf(q: Query): Range {
@@ -84,6 +100,15 @@ export function insightRoutes(db: Db, guards: preHandlerHookHandler[]) {
           r
         )
       const [approvals, comments, commits] = await Promise.all([events('approved'), events('commented'), commitsByEmail(r)])
+      const [activity] = await db.query<RowDataPacket[]>(
+        `SELECT user_id, type, SUM(count) AS n FROM activity WHERE created_at >= ? AND created_at < ?${projectFilter(r)} GROUP BY user_id, type`,
+        [r.start, r.end]
+      )
+      const usage = new Map(all.map((p) => [p.id, Object.fromEntries(Object.values(USAGE).map((k) => [k, 0]))]))
+      for (const a of activity) {
+        const u = usage.get(a.user_id)
+        if (u && USAGE[a.type]) u[USAGE[a.type]] = Number(a.n)
+      }
 
       const stats = new Map(all.map((p) => [p.id, { commits: 0, additions: 0, deletions: 0 }]))
       for (const c of commits) {
@@ -101,7 +126,32 @@ export function insightRoutes(db: Db, guards: preHandlerHookHandler[]) {
         mrsOpened: (p.gitlab && opened.get(p.gitlab)) || 0,
         mrsMerged: (p.gitlab && merged.get(p.gitlab)) || 0,
         approvals: (p.gitlab && approvals.get(p.gitlab)) || 0,
-        comments: (p.gitlab && comments.get(p.gitlab)) || 0
+        comments: (p.gitlab && comments.get(p.gitlab)) || 0,
+        ...usage.get(p.id)!
+      }))
+    })
+
+    // The activity log: who did what, when, in which project. Members only see their own.
+    // Active minutes (one a minute) would bury everything else, so they show only when filtered for.
+    app.get<{ Querystring: Query }>('/activity', { schema: { querystring: LOG_QUERY } }, async (req) => {
+      const r = rangeOf(req.query)
+      const user = isLead(req) ? req.query.user : req.user.id
+      const [rows] = await db.query<RowDataPacket[]>(
+        `SELECT a.created_at, a.user_id, a.type, a.agent, a.detail, p.name AS project, COALESCE(u.username, u.email) AS name
+         FROM activity a JOIN users u ON u.id = a.user_id LEFT JOIN projects p ON p.id = a.project_id
+         WHERE a.created_at >= ? AND a.created_at < ?${projectFilter(r, 'a.project_id')}
+         ${user ? 'AND a.user_id = ?' : ''} ${req.query.type ? 'AND a.type = ?' : "AND a.type <> 'active'"}
+         ORDER BY a.created_at DESC, a.id DESC LIMIT ${LOG_LIMIT}`,
+        [r.start, r.end, ...(user ? [user] : []), ...(req.query.type ? [req.query.type] : [])]
+      )
+      return rows.map((a) => ({
+        at: a.created_at,
+        userId: a.user_id,
+        name: a.name,
+        type: a.type,
+        agent: a.agent,
+        detail: a.detail,
+        projectName: a.project
       }))
     })
 

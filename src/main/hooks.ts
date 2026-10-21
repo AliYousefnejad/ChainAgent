@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow } from 'electron'
 import notifyHelper from './notify-helper.cjs?raw'
 import opencodePlugin from './opencode-plugin.js?raw'
+import * as activity from './activity'
 import { writeZshIntegration } from './shell-integration'
 
 // Agents report a finished turn by POSTing here: Claude through its Stop hook, Codex and
@@ -28,6 +29,7 @@ function emitToWindows(channel: string, ...args: unknown[]): void {
 }
 
 export function emitFinished(node: string, text: string): void {
+  activity.turnFinished(node)
   emitToWindows('agent:finished', node, text)
 }
 

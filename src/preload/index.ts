@@ -13,7 +13,8 @@ contextBridge.exposeInMainWorld('api', {
   onFullScreen: (cb: (on: boolean) => void) => listen('window:fullscreen', cb),
   createTeam: (task: string, allowed: string[], cwd: string) => ipcRenderer.invoke('team:create', task, allowed, cwd),
   isClaudeTrusted: (folder: string) => ipcRenderer.invoke('claude:isTrusted', folder),
-  toggleFullScreen: () => ipcRenderer.send('window:toggleFullScreen')
+  toggleFullScreen: () => ipcRenderer.send('window:toggleFullScreen'),
+  track: (type: string, nodeId?: string, detail?: string) => ipcRenderer.send('activity:track', type, nodeId, detail)
 })
 
 function listen<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {

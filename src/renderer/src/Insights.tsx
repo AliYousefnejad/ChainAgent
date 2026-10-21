@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { agentById } from './agents'
 import {
   api,
+  type ActivityRow,
+  type ActivityType,
   type AdminUser,
   type InsightsFilter,
   type MergeRequestRow,
@@ -12,7 +15,7 @@ import {
 } from './api'
 
 type Props = { currentUser: User; onClose: () => void }
-type Tab = 'people' | 'projects' | 'mrs'
+type Tab = 'people' | 'projects' | 'mrs' | 'activity'
 
 const PRESETS = [7, 30, 90]
 const EMPTY = 'No data for this range — sync a project first'
@@ -29,15 +32,64 @@ const fmt = (n: number) => n.toLocaleString()
 const fmtDate = (s: string) => new Date(s).toLocaleDateString()
 const fmtTime = (s: string) => new Date(s).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 
-type SortKey = 'name' | 'commits' | 'lines' | 'mrsOpened' | 'mrsMerged' | 'approvals' | 'comments'
-const COLUMNS: { key: Exclude<SortKey, 'name'>; label: string; value: (p: PersonStats) => number }[] = [
+const fmtMinutes = (m: number) => (m < 60 ? `${m} min` : `${(m / 60).toFixed(1)} h`)
+
+type SortKey =
+  | 'name'
+  | 'commits'
+  | 'lines'
+  | 'mrsOpened'
+  | 'mrsMerged'
+  | 'approvals'
+  | 'comments'
+  | 'active'
+  | 'windows'
+  | 'prompts'
+  | 'turns'
+  | 'handoffs'
+  | 'runs'
+// format: the cell text when it isn't a plain count; the tooltip uses it too.
+const COLUMNS: {
+  key: Exclude<SortKey, 'name'>
+  label: string
+  value: (p: PersonStats) => number
+  format?: (p: PersonStats) => string
+}[] = [
   { key: 'commits', label: 'Commits', value: (p) => p.commits },
   { key: 'lines', label: 'Lines', value: (p) => p.additions + p.deletions },
   { key: 'mrsOpened', label: 'MRs opened', value: (p) => p.mrsOpened },
   { key: 'mrsMerged', label: 'MRs merged', value: (p) => p.mrsMerged },
   { key: 'approvals', label: 'Approvals', value: (p) => p.approvals },
-  { key: 'comments', label: 'Comments', value: (p) => p.comments }
+  { key: 'comments', label: 'Comments', value: (p) => p.comments },
+  { key: 'active', label: 'Active', value: (p) => p.activeMinutes, format: (p) => fmtMinutes(p.activeMinutes) },
+  { key: 'windows', label: 'Windows', value: (p) => p.windows },
+  { key: 'prompts', label: 'Prompts', value: (p) => p.prompts },
+  { key: 'turns', label: 'Turns', value: (p) => p.turns },
+  { key: 'handoffs', label: 'Hand-offs', value: (p) => p.handoffs },
+  { key: 'runs', label: 'Plans · teams', value: (p) => p.plans + p.teams, format: (p) => `${fmt(p.plans)} · ${fmt(p.teams)}` }
 ]
+
+const EVENT_LABELS: Record<ActivityType, string> = {
+  login: 'Signed in',
+  logout: 'Signed out',
+  window_opened: 'Opened a window',
+  window_closed: 'Closed a window',
+  turn_finished: 'Finished a turn',
+  handoff: 'Wire hand-off',
+  prompt: 'Sent a prompt',
+  plan_run: 'Ran a plan',
+  team_run: 'Started a team',
+  active: 'Active minute'
+}
+const PROMPT_SOURCES: Record<string, string> = { send: 'prompt box', plan: 'plan', team: 'team' }
+
+// What the log adds after the event name: where a hand-off came from, or how a prompt was sent.
+function eventDetail(e: ActivityRow) {
+  if (!e.detail) return ''
+  if (e.type === 'handoff') return `from ${agentById(e.detail).name}`
+  if (e.type === 'prompt') return `via ${PROMPT_SOURCES[e.detail] ?? e.detail}`
+  return e.detail
+}
 
 // A number with a slim bar scaled to the column's largest value, so the table reads as a chart.
 function BarCell({ value, max, tip, children }: { value: number; max: number; tip: string; children: ReactNode }) {
@@ -63,6 +115,9 @@ export default function Insights({ currentUser, onClose }: Props) {
   const [unmatched, setUnmatched] = useState<UnmatchedAuthor[]>([])
   const [projectStats, setProjectStats] = useState<ProjectStats[]>([])
   const [mrs, setMrs] = useState<MergeRequestRow[]>([])
+  const [activity, setActivity] = useState<ActivityRow[]>([])
+  const [logUser, setLogUser] = useState(0)
+  const [logType, setLogType] = useState<ActivityType | ''>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
@@ -97,7 +152,11 @@ export default function Insights({ currentUser, onClose }: Props) {
           ])
         : tab === 'projects'
           ? api.insightsProjects(filter).then((rows) => !stale && setProjectStats(rows))
-          : api.insightsMergeRequests(filter).then((rows) => !stale && setMrs(rows))
+          : tab === 'mrs'
+            ? api.insightsMergeRequests(filter).then((rows) => !stale && setMrs(rows))
+            : api
+                .insightsActivity({ ...filter, user: logUser || undefined, type: logType || undefined })
+                .then((rows) => !stale && setActivity(rows))
     setLoading(true)
     setError('')
     load
@@ -106,7 +165,7 @@ export default function Insights({ currentUser, onClose }: Props) {
     return () => {
       stale = true
     }
-  }, [tab, range, projectId, badRange, isStaff, reload])
+  }, [tab, range, projectId, logUser, logType, badRange, isStaff, reload])
 
   const pickPreset = (days: number) => {
     setPreset(days)
@@ -203,11 +262,13 @@ export default function Insights({ currentUser, onClose }: Props) {
     ? [
         ['people', 'People'],
         ['projects', 'Projects'],
-        ['mrs', 'Merge requests']
+        ['mrs', 'Merge requests'],
+        ['activity', 'Activity log']
       ]
     : [
         ['people', 'People'],
-        ['mrs', 'Merge requests']
+        ['mrs', 'Merge requests'],
+        ['activity', 'Activity log']
       ]
   const status = loading ? <div className="insights-empty">Loading…</div> : null
 
@@ -217,49 +278,52 @@ export default function Insights({ currentUser, onClose }: Props) {
         (people.length === 0 ? (
           <div className="insights-empty">{EMPTY}</div>
         ) : (
-          <table className="admin-table insights-table">
-            <thead>
-              <tr>
-                {sortHeader('name', 'Person')}
-                {COLUMNS.map((c) => sortHeader(c.key, c.label))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedPeople.map((p) => (
-                <tr key={p.userId}>
-                  <td>
-                    <div className="person-name">{p.name}</div>
-                    <div className="person-email">{p.email}</div>
-                  </td>
-                  {COLUMNS.map((c) => {
-                    const value = c.value(p)
-                    if (c.key === 'lines')
+          <div className="table-scroll">
+            <table className="admin-table insights-table">
+              <thead>
+                <tr>
+                  {sortHeader('name', 'Person')}
+                  {COLUMNS.map((c) => sortHeader(c.key, c.label))}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedPeople.map((p) => (
+                  <tr key={p.userId}>
+                    <td>
+                      <div className="person-name">{p.name}</div>
+                      <div className="person-email">{p.email}</div>
+                    </td>
+                    {COLUMNS.map((c) => {
+                      const value = c.value(p)
+                      if (c.key === 'lines')
+                        return (
+                          <BarCell
+                            key={c.key}
+                            value={value}
+                            max={maxOf(c.value)}
+                            tip={`${p.name}: +${fmt(p.additions)} / −${fmt(p.deletions)} lines`}
+                          >
+                            <span className="lines-add">+{fmt(p.additions)}</span>{' '}
+                            <span className="lines-del">−{fmt(p.deletions)}</span>
+                          </BarCell>
+                        )
+                      const text = c.format ? c.format(p) : fmt(value)
                       return (
                         <BarCell
                           key={c.key}
                           value={value}
                           max={maxOf(c.value)}
-                          tip={`${p.name}: +${fmt(p.additions)} / −${fmt(p.deletions)} lines`}
+                          tip={`${p.name}: ${text} ${c.label.toLowerCase()}`}
                         >
-                          <span className="lines-add">+{fmt(p.additions)}</span>{' '}
-                          <span className="lines-del">−{fmt(p.deletions)}</span>
+                          {text}
                         </BarCell>
                       )
-                    return (
-                      <BarCell
-                        key={c.key}
-                        value={value}
-                        max={maxOf(c.value)}
-                        tip={`${p.name}: ${fmt(value)} ${c.label.toLowerCase()}`}
-                      >
-                        {fmt(value)}
-                      </BarCell>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ))}
 
       {isStaff && !loading && unmatched.length > 0 && (
@@ -515,6 +579,61 @@ export default function Insights({ currentUser, onClose }: Props) {
       </table>
     ))
 
+  const activityView = (
+    <>
+      <div className="insights-filters">
+        {isStaff && (
+          <select value={logUser} onChange={(e) => setLogUser(Number(e.target.value))} aria-label="Person">
+            <option value={0}>Everyone</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.username ?? u.email}
+              </option>
+            ))}
+          </select>
+        )}
+        <select value={logType} onChange={(e) => setLogType(e.target.value as ActivityType | '')} aria-label="Event">
+          <option value="">All events</option>
+          {(Object.keys(EVENT_LABELS) as ActivityType[]).map((t) => (
+            <option key={t} value={t}>
+              {EVENT_LABELS[t]}
+            </option>
+          ))}
+        </select>
+        <span className="insights-hint">Newest 500 events. Active minutes show only when picked above.</span>
+      </div>
+      {status ??
+        (activity.length === 0 ? (
+          <div className="insights-empty">No activity in this range</div>
+        ) : (
+          <table className="admin-table insights-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                {isStaff && <th>Person</th>}
+                <th>Event</th>
+                <th>Agent</th>
+                <th>Project</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activity.map((e, i) => (
+                <tr key={`${e.at}-${i}`}>
+                  <td>{fmtTime(e.at)}</td>
+                  {isStaff && <td>{e.name}</td>}
+                  <td>
+                    {EVENT_LABELS[e.type]} <span className="muted">{eventDetail(e)}</span>
+                  </td>
+                  <td>{e.agent ? agentById(e.agent).name : '—'}</td>
+                  <td>{e.projectName ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+    </>
+  )
+
   return (
     <div className="admin-overlay">
       <div className="admin-header">
@@ -525,7 +644,7 @@ export default function Insights({ currentUser, onClose }: Props) {
       </div>
 
       {!isStaff && (
-        <div className="insights-note">Managers can see your activity counts (not your prompts or code).</div>
+        <div className="insights-note">Managers can see your activity counts and log (not your prompts, answers or code).</div>
       )}
 
       <div className="insights-filters">
@@ -579,6 +698,7 @@ export default function Insights({ currentUser, onClose }: Props) {
       {tab === 'people' && peopleView}
       {tab === 'projects' && isStaff && projectsView}
       {tab === 'mrs' && mrsView}
+      {tab === 'activity' && activityView}
     </div>
   )
 }

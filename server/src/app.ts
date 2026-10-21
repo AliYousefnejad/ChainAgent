@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import type { ResultSetHeader, RowDataPacket } from 'mysql2'
 import type { Db } from './db'
+import { activityRoutes, record } from './activity'
 import { insightRoutes } from './insights'
 import { createLoginLimiter, type LoginLimiter } from './login-limiter'
 import { projectRoutes } from './projects'
@@ -157,6 +158,7 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
       await db.query('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', [user.id])
       if (!user.is_active) return reply.code(403).send({ message: 'Account disabled. Ask your admin to enable it.' })
 
+      await record(db, user.id, 'login')
       const token = randomBytes(32).toString('base64url')
       await db.query(
         'INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (?, ?, NOW() + INTERVAL ? DAY)',
@@ -170,6 +172,7 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
     authed.addHook('preHandler', requireAuth)
 
     authed.post('/auth/logout', async (req, reply) => {
+      await record(db, req.user.id, 'logout')
       await db.query('DELETE FROM sessions WHERE token_hash = ?', [req.tokenHash])
       return reply.code(204).send()
     })
@@ -360,6 +363,7 @@ export async function buildApp(db: Db, { logger = false, trustProxy = false, lim
 
     authed.register(projectRoutes(db, [requireSetupDone, requireRole('admin', 'manager')]), { prefix: '/projects' })
     authed.register(insightRoutes(db, [requireSetupDone]), { prefix: '/insights' })
+    authed.register(activityRoutes(db, [requireSetupDone]), { prefix: '/activity' })
   })
 
   return app

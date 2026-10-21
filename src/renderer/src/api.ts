@@ -25,6 +25,7 @@ declare global {
       createTeam(task: string, allowed: AgentType[], cwd: string): Promise<TeamResult>
       isClaudeTrusted(folder: string): Promise<boolean>
       toggleFullScreen(): void
+      track(type: 'handoff' | 'prompt' | 'plan_run' | 'team_run' | 'active', nodeId?: string, detail?: string): void
     }
     pty: {
       spawn(id: string, agentId: string, cwd: string, cols: number, rows: number, role?: string): Promise<string | null>
@@ -76,7 +77,17 @@ type ActivityCounts = {
   approvals: number
   comments: number
 }
-export type PersonStats = ActivityCounts & { userId: number; name: string; email: string }
+// Usage in ChainAgent, from the app's activity events.
+type UsageCounts = {
+  activeMinutes: number
+  windows: number
+  prompts: number
+  turns: number
+  handoffs: number
+  plans: number
+  teams: number
+}
+export type PersonStats = ActivityCounts & UsageCounts & { userId: number; name: string; email: string }
 export type UnmatchedAuthor = { authorName: string; authorEmail: string; commits: number }
 export type ProjectStats = ActivityCounts & {
   projectId: number
@@ -98,8 +109,35 @@ export type MergeRequestRow = {
   reviewers: string[]
   webUrl: string
 }
+export type ActivityType =
+  | 'login'
+  | 'logout'
+  | 'window_opened'
+  | 'window_closed'
+  | 'turn_finished'
+  | 'handoff'
+  | 'prompt'
+  | 'plan_run'
+  | 'team_run'
+  | 'active'
+export type ActivityRow = {
+  at: string
+  userId: number
+  name: string
+  type: ActivityType
+  agent: AgentType | null
+  detail: string | null
+  projectName: string | null
+}
 // from/to are YYYY-MM-DD, both inclusive.
-export type InsightsFilter = { from: string; to: string; project?: number; author?: number }
+export type InsightsFilter = {
+  from: string
+  to: string
+  project?: number
+  author?: number
+  user?: number
+  type?: ActivityType
+}
 
 let unauthorized: () => void = () => {}
 export const onUnauthorized = (cb: () => void) => {
@@ -115,6 +153,8 @@ function withQuery(path: string, filter: InsightsFilter) {
   const params = new URLSearchParams({ from: filter.from, to: filter.to })
   if (filter.project) params.set('project', String(filter.project))
   if (filter.author) params.set('author', String(filter.author))
+  if (filter.user) params.set('user', String(filter.user))
+  if (filter.type) params.set('type', filter.type)
   return `${path}?${params}`
 }
 
@@ -152,5 +192,6 @@ export const api = {
     call<UnmatchedAuthor[]>('GET', withQuery('/insights/unmatched', filter)),
   insightsProjects: (filter: InsightsFilter) => call<ProjectStats[]>('GET', withQuery('/insights/projects', filter)),
   insightsMergeRequests: (filter: InsightsFilter) =>
-    call<MergeRequestRow[]>('GET', withQuery('/insights/merge-requests', filter))
+    call<MergeRequestRow[]>('GET', withQuery('/insights/merge-requests', filter)),
+  insightsActivity: (filter: InsightsFilter) => call<ActivityRow[]>('GET', withQuery('/insights/activity', filter))
 }

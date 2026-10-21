@@ -48,10 +48,12 @@ ChainAgent is a desktop app (Electron) with a small login server, so a team can 
   - **People:** per person and date range: commits and lines added/removed (default branch, merge commits excluded), MRs opened and merged, approvals given, MR comments.
   - **Unmatched authors** lists commit emails that belong to nobody yet. Link one to a person with one click.
   - **Projects:** totals per project. **Merge requests:** list with links to GitLab.
+  - **ChainAgent usage:** People also shows active time, windows opened, prompts, finished turns, wire hand-offs, and plans and teams run. The app reports counts only, never prompts, answers or code. A window is linked to a project when its folder's `origin` remote is that GitLab project.
+  - **Activity log:** sign-ins, windows, prompts, turns, hand-offs and runs, with when, who, agent and project. Filter by person, event, project and date.
 - **Roles.**
   - **Admin:** everything, including setting roles.
   - **Manager (Head):** Insights for everyone, projects, and managing members (add, disable, reset).
-  - **Member:** sees only their own numbers, with a note on what managers can see.
+  - **Member:** sees only their own numbers and log, with a note on what managers can see.
 - **Sign-in protection.**
   - Login says plainly whether an email has an account.
   - **5 wrong passwords in a row lock that account for 15 minutes**, including attempts sent at the same time. An admin's *Reset password* unlocks it immediately, and the Users page shows a *Locked* badge.

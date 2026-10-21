@@ -24,7 +24,7 @@ export async function teardown({ db, app }: Ctx): Promise<void> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  for (const table of ['mr_events', 'merge_requests', 'commits', 'projects', 'sessions', 'users']) {
+  for (const table of ['activity', 'mr_events', 'merge_requests', 'commits', 'projects', 'sessions', 'users']) {
     await db.query(`DELETE FROM ${table}`)
   }
 }
